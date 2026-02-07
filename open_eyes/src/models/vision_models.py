@@ -24,6 +24,14 @@ class ObservationType(str, Enum):
     SAFETY_ALERT = "SAFETY_ALERT"
 
 
+class FaceLandmark(BaseModel):
+    """A single facial landmark point (normalized 0-1)."""
+
+    x: float = Field(..., description="Normalized x coordinate (0-1)")
+    y: float = Field(..., description="Normalized y coordinate (0-1)")
+    z: float = Field(0.0, description="Normalized z depth (0-1)")
+
+
 class DetectedObject(BaseModel):
     """A single detected object in a frame."""
 
@@ -38,6 +46,12 @@ class DetectedObject(BaseModel):
     )
     area_fraction: float = Field(
         0.0, description="Fraction of frame area occupied"
+    )
+    landmarks: Optional[List[FaceLandmark]] = Field(
+        None, description="Face landmarks (478 points, normalized 0-1)"
+    )
+    blendshapes: Optional[dict[str, float]] = Field(
+        None, description="Face blendshape scores (52 values, 0-1)"
     )
 
 

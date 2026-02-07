@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 
 from ..config import settings
-from ..models.vision_models import ObservationType, SceneDescription
+from ..models.vision_models import DetectedObject, ObservationType, SceneDescription
 from ..services.analyzer_factory import create_analyzer
 from ..services.camera_capture import CameraCapture
 from ..services.change_detector import ChangeDetector
@@ -130,6 +130,15 @@ class VisionPipeline:
         if not self._observations_file.exists():
             self._observations_file.touch()
 
+        # Clear structured observations from previous session
+        try:
+            settings.STRUCTURED_OBSERVATIONS_FILE.parent.mkdir(
+                parents=True, exist_ok=True
+            )
+            settings.STRUCTURED_OBSERVATIONS_FILE.write_text("")
+        except Exception as e:
+            logger.debug(f"Failed to clear structured observations: {e}")
+
         # Start threads
         thread_configs = [
             ("eyes-capture", self._capture_loop),
@@ -225,6 +234,24 @@ class VisionPipeline:
             except Exception as e:
                 logger.error(f"Detection error: {e}")
 
+    @staticmethod
+    def _serialize_detected_object(obj: DetectedObject) -> dict:
+        """Serialize a DetectedObject to a JSON-safe dict."""
+        data = {
+            "label": obj.label,
+            "confidence": obj.confidence,
+            "bbox": list(obj.bbox),
+            "area_fraction": obj.area_fraction,
+        }
+        if obj.landmarks is not None:
+            data["landmarks"] = [
+                {"x": round(lm.x, 4), "y": round(lm.y, 4), "z": round(lm.z, 4)}
+                for lm in obj.landmarks
+            ]
+        if obj.blendshapes is not None:
+            data["blendshapes"] = obj.blendshapes
+        return data
+
     def _write_latest_detections(self, result: SceneDescription) -> None:
         """Write latest detection data to JSON for external viewers."""
         try:
@@ -235,12 +262,7 @@ class VisionPipeline:
                 "description": result.description,
                 "processing_time_ms": result.processing_time_ms,
                 "detected_objects": [
-                    {
-                        "label": obj.label,
-                        "confidence": obj.confidence,
-                        "bbox": list(obj.bbox),
-                        "area_fraction": obj.area_fraction,
-                    }
+                    self._serialize_detected_object(obj)
                     for obj in result.detected_objects
                 ],
                 "frame_resolution": [
@@ -334,6 +356,11 @@ class VisionPipeline:
                 with open(self._observations_file, "a") as f:
                     f.write(line)
 
+                # Write structured observation with coordinates
+                self._write_structured_observation(
+                    observation, obs_type, timestamp
+                )
+
                 self.state_manager.increment_reported()
                 logger.info(
                     f"Observation reported: [{obs_type.value}] "
@@ -346,6 +373,49 @@ class VisionPipeline:
                 continue
             except Exception as e:
                 logger.error(f"Output error: {e}")
+
+    def _write_structured_observation(
+        self,
+        observation: SceneDescription,
+        obs_type: ObservationType,
+        timestamp: str,
+    ) -> None:
+        """Append a structured observation record to the JSONL file."""
+        try:
+            record = {
+                "timestamp": timestamp,
+                "observation_type": obs_type.value,
+                "description": observation.description,
+                "analysis_method": observation.analysis_method,
+                "processing_time_ms": observation.processing_time_ms,
+                "frame_resolution": [
+                    settings.CAPTURE_RESOLUTION_W,
+                    settings.CAPTURE_RESOLUTION_H,
+                ],
+                "detected_objects": [
+                    self._serialize_detected_object(obj)
+                    for obj in observation.detected_objects
+                ],
+            }
+
+            line = json.dumps(record, separators=(",", ":")) + "\n"
+            with open(settings.STRUCTURED_OBSERVATIONS_FILE, "a") as f:
+                f.write(line)
+
+            self._maybe_rotate_structured_file()
+        except Exception as e:
+            logger.debug(f"Failed to write structured observation: {e}")
+
+    def _maybe_rotate_structured_file(self) -> None:
+        """Truncate structured observations file if it exceeds max size."""
+        try:
+            fpath = settings.STRUCTURED_OBSERVATIONS_FILE
+            if fpath.exists() and fpath.stat().st_size > settings.MAX_STRUCTURED_FILE_SIZE:
+                lines = fpath.read_text().splitlines(keepends=True)
+                half = len(lines) // 2
+                fpath.write_text("".join(lines[half:]))
+        except Exception as e:
+            logger.debug(f"Failed to rotate structured observations: {e}")
 
     def _display_loop(self) -> None:
         """Thread 6: Terminal visualization of pipeline status."""

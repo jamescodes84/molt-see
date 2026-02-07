@@ -12,6 +12,7 @@ runtime/*.signal
 runtime/agent_instructions.active
 runtime/agent_shutdown.signal
 runtime/latest_detections.json
+runtime/structured_observations.jsonl
 runtime/latest_frame.jpg
 runtime/*.task
 

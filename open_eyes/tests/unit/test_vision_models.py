@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from open_eyes.src.models.vision_models import (
     CapturedFrame,
     DetectedObject,
+    FaceLandmark,
     ObservationType,
     RelevanceScore,
     SceneDescription,
@@ -55,6 +56,46 @@ class TestDetectedObject:
             bbox=(0, 0, 50, 50),
         )
         assert obj.area_fraction == 0.0
+
+    def test_landmarks_default_none(self):
+        """Landmarks should default to None for non-face objects."""
+        obj = DetectedObject(
+            label="person",
+            confidence=0.9,
+            bbox=(10, 20, 100, 200),
+        )
+        assert obj.landmarks is None
+        assert obj.blendshapes is None
+
+    def test_with_face_landmarks(self):
+        """Face detection should carry landmarks and blendshapes."""
+        landmarks = [
+            FaceLandmark(x=0.45, y=0.32, z=0.01),
+            FaceLandmark(x=0.55, y=0.32, z=0.01),
+            FaceLandmark(x=0.50, y=0.50, z=0.02),
+        ]
+        blendshapes = {
+            "mouthSmileLeft": 0.72,
+            "mouthSmileRight": 0.68,
+            "jawOpen": 0.05,
+        }
+        obj = DetectedObject(
+            label="face: smiling",
+            confidence=0.9,
+            bbox=(180, 60, 320, 220),
+            area_fraction=0.07,
+            landmarks=landmarks,
+            blendshapes=blendshapes,
+        )
+        assert len(obj.landmarks) == 3
+        assert obj.landmarks[0].x == pytest.approx(0.45)
+        assert obj.landmarks[0].z == pytest.approx(0.01)
+        assert obj.blendshapes["mouthSmileLeft"] == pytest.approx(0.72)
+
+    def test_face_landmark_defaults(self):
+        """FaceLandmark z should default to 0.0."""
+        lm = FaceLandmark(x=0.5, y=0.5)
+        assert lm.z == 0.0
 
 
 class TestCapturedFrame:

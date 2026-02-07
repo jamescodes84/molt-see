@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 from ..config import settings
-from ..models.vision_models import DetectedObject, SceneDescription
+from ..models.vision_models import DetectedObject, FaceLandmark, SceneDescription
 
 logger = logging.getLogger(__name__)
 
@@ -871,15 +871,21 @@ class MediaPipeFaceAnalyzer:
             x2 = int(max(xs))
             y2 = int(max(ys))
 
+            # Preserve all 478 landmarks (normalized coordinates)
+            landmarks = [
+                FaceLandmark(x=lm.x, y=lm.y, z=lm.z)
+                for lm in face_landmarks
+            ]
+
             # Get expression from blendshapes
-            blendshapes = None
+            blendshapes_dict = None
             if result.face_blendshapes and i < len(result.face_blendshapes):
-                blendshapes = {
-                    bs.category_name: bs.score
+                blendshapes_dict = {
+                    bs.category_name: round(bs.score, 4)
                     for bs in result.face_blendshapes[i]
                 }
 
-            expression = self._classify_expression(blendshapes)
+            expression = self._classify_expression(blendshapes_dict)
             label = f"face: {expression}"
             box_area = max(0, (x2 - x1)) * max(0, (y2 - y1))
 
@@ -889,6 +895,8 @@ class MediaPipeFaceAnalyzer:
                     confidence=0.9,
                     bbox=(x1, y1, x2, y2),
                     area_fraction=box_area / frame_area if frame_area else 0.0,
+                    landmarks=landmarks,
+                    blendshapes=blendshapes_dict,
                 )
             )
             if "face" not in object_labels:
