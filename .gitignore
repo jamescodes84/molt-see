@@ -1,0 +1,51 @@
+# Logs
+logs/
+*.log
+
+# Runtime files
+runtime/*.pid
+runtime/*_status.txt
+runtime/visual_observations.txt
+runtime/vision_memory.json
+runtime/molt_see_config.json
+runtime/*.signal
+runtime/agent_instructions.active
+runtime/agent_shutdown.signal
+runtime/latest_detections.json
+runtime/latest_frame.jpg
+runtime/*.task
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.env
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+htmlcov/
+.coverage
+.pytest_cache/
+
+# Models cache
+*.pt
+*.onnx
+
+# Ruff
+.ruff_cache/
