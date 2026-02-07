@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 
 from ..config import settings
-from ..models.vision_models import DetectedObject, ObservationType, SceneDescription
+from ..models.vision_models import DetectedObject, ObservationType, RelevanceScore, SceneDescription
 from ..services.analyzer_factory import create_analyzer
 from ..services.camera_capture import CameraCapture
 from ..services.change_detector import ChangeDetector
@@ -79,7 +79,7 @@ class VisionPipeline:
         self._capture_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=max_q)
         self._analysis_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=max_q)
         self._relevance_queue: queue.Queue[SceneDescription] = queue.Queue(maxsize=max_q)
-        self._output_queue: queue.Queue[SceneDescription] = queue.Queue(maxsize=max_q)
+        self._output_queue: queue.Queue[tuple[SceneDescription, RelevanceScore]] = queue.Queue(maxsize=max_q)
 
         # Components
         self._camera = CameraCapture(
@@ -105,8 +105,10 @@ class VisionPipeline:
         # Threads
         self._threads: list[threading.Thread] = []
 
-        # Load persisted memory
+        # Load persisted memory (long-term knowledge like known objects),
+        # then clear short-term dedup state for a fresh session
         self._vision_memory.load_state()
+        self._vision_memory.clear_session()
 
     def start(self) -> bool:
         """
@@ -125,12 +127,9 @@ class VisionPipeline:
 
         self._running = True
 
-        # Create output file
+        # Clear session files (short-term only; long-term memory handled elsewhere)
         self._observations_file.parent.mkdir(parents=True, exist_ok=True)
-        if not self._observations_file.exists():
-            self._observations_file.touch()
-
-        # Clear structured observations from previous session
+        self._observations_file.write_text("")
         try:
             settings.STRUCTURED_OBSERVATIONS_FILE.parent.mkdir(
                 parents=True, exist_ok=True
@@ -187,17 +186,26 @@ class VisionPipeline:
 
         while self._running:
             try:
+                start = time.monotonic()
                 frame = self._camera.get_frame()
                 if frame is not None:
                     self.state_manager.set_capturing(self._camera.frame_count)
                     self._notifier.notify_capturing(self._camera.frame_count)
-                    self._write_latest_frame(frame)
+                    # Write frame to disk in background thread
+                    threading.Thread(
+                        target=self._write_latest_frame,
+                        args=(frame,),
+                        daemon=True,
+                    ).start()
                     try:
                         self._capture_queue.put_nowait(frame)
                     except queue.Full:
-                        # Drop frame if queue is full
                         pass
-                time.sleep(frame_interval)
+                # Drift-compensated sleep
+                elapsed = time.monotonic() - start
+                sleep_time = frame_interval - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
             except Exception as e:
                 logger.error(f"Capture error: {e}")
                 time.sleep(1.0)
@@ -216,7 +224,7 @@ class VisionPipeline:
         """Thread 2: Check for scene changes, pass changed frames."""
         while self._running:
             try:
-                frame = self._capture_queue.get(timeout=1.0)
+                frame = self._capture_queue.get(timeout=settings.QUEUE_TIMEOUT)
                 magnitude = self._change_detector.get_change_magnitude(frame)
                 self.state_manager.update_change_magnitude(magnitude)
 
@@ -281,7 +289,7 @@ class VisionPipeline:
         analyzer_failed = False
         while self._running:
             try:
-                frame = self._analysis_queue.get(timeout=1.0)
+                frame = self._analysis_queue.get(timeout=settings.QUEUE_TIMEOUT)
 
                 if analyzer_failed:
                     continue  # Drain queue, don't retry broken analyzer
@@ -313,10 +321,10 @@ class VisionPipeline:
                 logger.error(f"Analysis error: {e}")
 
     def _relevance_loop(self) -> None:
-        """Thread 4: Score and filter observations."""
+        """Thread 4: Score all observations, pass everything to output."""
         while self._running:
             try:
-                observation = self._relevance_queue.get(timeout=1.0)
+                observation = self._relevance_queue.get(timeout=settings.QUEUE_TIMEOUT)
                 self._vision_memory.record_observation(observation)
 
                 score = self._relevance_engine.evaluate(observation)
@@ -328,83 +336,86 @@ class VisionPipeline:
                 if score.should_report:
                     self._relevance_engine.mark_reported()
                     self._vision_memory.record_reported(observation)
-                    try:
-                        self._output_queue.put_nowait(observation)
-                    except queue.Full:
-                        pass
+
+                # Always send to output for structured logging;
+                # output loop decides what goes to agent IPC vs full record
+                try:
+                    self._output_queue.put_nowait((observation, score))
+                except queue.Full:
+                    pass
             except queue.Empty:
                 continue
             except Exception as e:
                 logger.error(f"Relevance error: {e}")
 
     def _output_loop(self) -> None:
-        """Thread 5: Write approved observations to file."""
+        """Thread 5: Record all observations; write agent IPC only for relevant ones."""
+        structured_writes = 0
         while self._running:
             try:
-                observation = self._output_queue.get(timeout=1.0)
-                self.state_manager.set_observing(observation.description)
-                self._notifier.notify_observing(observation.description)
+                observation, score = self._output_queue.get(timeout=settings.QUEUE_TIMEOUT)
 
-                # Determine observation type
                 obs_type = self._classify_observation(observation)
-
-                # Format output line
                 timestamp = datetime.now(timezone.utc).isoformat()
-                line = f"{timestamp}|{obs_type.value}|{observation.description}\n"
 
-                # Append to observations file
-                with open(self._observations_file, "a") as f:
-                    f.write(line)
+                # Always write the full record to structured JSONL
+                structured_record = json.dumps({
+                    "timestamp": timestamp,
+                    "observation_type": obs_type.value,
+                    "description": observation.description,
+                    "analysis_method": observation.analysis_method,
+                    "processing_time_ms": observation.processing_time_ms,
+                    "relevance_score": round(score.overall_score, 3),
+                    "relevance_factors": {
+                        "novelty": round(score.novelty, 3),
+                        "context_match": round(score.context_match, 3),
+                        "intrinsic_interest": round(score.intrinsic_interest, 3),
+                        "timing": round(score.timing, 3),
+                    },
+                    "reported_to_agent": score.should_report,
+                    "frame_resolution": [
+                        settings.CAPTURE_RESOLUTION_W,
+                        settings.CAPTURE_RESOLUTION_H,
+                    ],
+                    "detected_objects": [
+                        self._serialize_detected_object(obj)
+                        for obj in observation.detected_objects
+                    ],
+                }, separators=(",", ":")) + "\n"
 
-                # Write structured observation with coordinates
-                self._write_structured_observation(
-                    observation, obs_type, timestamp
-                )
+                with open(settings.STRUCTURED_OBSERVATIONS_FILE, "a") as f:
+                    f.write(structured_record)
 
-                self.state_manager.increment_reported()
-                logger.info(
-                    f"Observation reported: [{obs_type.value}] "
-                    f"{observation.description}"
-                )
+                structured_writes += 1
+                if structured_writes % 50 == 0:
+                    self._maybe_rotate_structured_file()
 
-                self._notifier.notify_idle()
-                self.state_manager.set_idle()
+                # Only write to agent IPC file when relevant
+                if score.should_report:
+                    self.state_manager.set_observing(observation.description)
+                    self._notifier.notify_observing(observation.description)
+
+                    text_line = f"{timestamp}|{obs_type.value}|{observation.description}\n"
+                    with open(self._observations_file, "a") as f:
+                        f.write(text_line)
+
+                    self.state_manager.increment_reported()
+                    logger.info(
+                        f"Observation reported: [{obs_type.value}] "
+                        f"{observation.description}"
+                    )
+                    self._notifier.notify_idle()
+                    self.state_manager.set_idle()
+                else:
+                    logger.debug(
+                        f"Observation recorded (below threshold): "
+                        f"[{obs_type.value}] score={score.overall_score:.2f} "
+                        f"{observation.description[:80]}"
+                    )
             except queue.Empty:
                 continue
             except Exception as e:
                 logger.error(f"Output error: {e}")
-
-    def _write_structured_observation(
-        self,
-        observation: SceneDescription,
-        obs_type: ObservationType,
-        timestamp: str,
-    ) -> None:
-        """Append a structured observation record to the JSONL file."""
-        try:
-            record = {
-                "timestamp": timestamp,
-                "observation_type": obs_type.value,
-                "description": observation.description,
-                "analysis_method": observation.analysis_method,
-                "processing_time_ms": observation.processing_time_ms,
-                "frame_resolution": [
-                    settings.CAPTURE_RESOLUTION_W,
-                    settings.CAPTURE_RESOLUTION_H,
-                ],
-                "detected_objects": [
-                    self._serialize_detected_object(obj)
-                    for obj in observation.detected_objects
-                ],
-            }
-
-            line = json.dumps(record, separators=(",", ":")) + "\n"
-            with open(settings.STRUCTURED_OBSERVATIONS_FILE, "a") as f:
-                f.write(line)
-
-            self._maybe_rotate_structured_file()
-        except Exception as e:
-            logger.debug(f"Failed to write structured observation: {e}")
 
     def _maybe_rotate_structured_file(self) -> None:
         """Truncate structured observations file if it exceeds max size."""

@@ -120,14 +120,23 @@ def main() -> None:
         logger.error("Failed to start vision pipeline")
         sys.exit(1)
 
-    logger.info("OpenClaw Eyes running. Press Ctrl+C to stop.")
+    logger.info("OpenClaw Eyes running. Press 'q' + Enter or Ctrl+C to stop.")
 
-    # Keep main thread alive (sleep loop is more robust than
-    # signal.pause(), which wakes on SIGCHLD from subprocesses)
+    # Keep main thread alive, accept 'q' to quit gracefully
+    import select
     import time
 
-    while True:
-        time.sleep(1.0)
+    try:
+        while True:
+            # Check for stdin input (non-blocking with 1s timeout)
+            if select.select([sys.stdin], [], [], 1.0)[0]:
+                line = sys.stdin.readline().strip().lower()
+                if line in ("q", "quit", "exit"):
+                    break
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+    shutdown(signal.SIGINT, None)
 
 
 if __name__ == "__main__":

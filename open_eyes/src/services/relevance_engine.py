@@ -143,13 +143,13 @@ class RelevanceEngine:
         if self.vision_memory is None:
             return 0.8  # Default to fairly novel if no memory
 
-        # Check if this was recently reported
+        # Check if this was recently reported (time-windowed)
         if self.vision_memory.was_recently_reported(observation):
-            return 0.1
+            return 0.4
 
         # Check if it's a duplicate of any recent observation
         if self.vision_memory.is_duplicate(observation):
-            return 0.2
+            return 0.5
 
         # Check label overlap with recent observations
         recent = self.vision_memory.get_recent_observations(10)

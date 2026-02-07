@@ -311,7 +311,7 @@ class MoondreamAnalyzer:
                     self.model_name,
                     revision=self._REVISION,
                     trust_remote_code=True,
-                    torch_dtype=dtype,
+                    dtype=dtype,
                 ).to(device)
                 logger.info(
                     f"Moondream model loaded: {self.model_name} "

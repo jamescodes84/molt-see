@@ -45,6 +45,9 @@ class ConversationContextReader:
         self._mouth_status_file: Optional[Path] = None
         self._ears_status_file: Optional[Path] = None
 
+        # File read cache: {path_str: (mtime, content)}
+        self._read_cache: dict[str, tuple[float, str]] = {}
+
         if self.molt_speak_dir:
             self._transcriptions_file = self.molt_speak_dir / "transcriptions.txt"
             self._speech_output_file = self.molt_speak_dir / "speech_output.txt"
@@ -182,13 +185,27 @@ class ConversationContextReader:
 
         return not self.is_agent_speaking() and not self.is_user_speaking()
 
+    def _read_cached(self, file_path: Path) -> str:
+        """Read file contents, returning cached value if mtime unchanged."""
+        key = str(file_path)
+        try:
+            mtime = file_path.stat().st_mtime
+            cached = self._read_cache.get(key)
+            if cached and cached[0] == mtime:
+                return cached[1]
+            content = file_path.read_text()
+            self._read_cache[key] = (mtime, content)
+            return content
+        except Exception:
+            return ""
+
     def _read_status(self, status_file: Optional[Path]) -> Optional[str]:
         """Read status from a Molt-Speak status file."""
         if not status_file or not status_file.exists():
             return None
 
         try:
-            content = status_file.read_text().strip()
+            content = self._read_cached(status_file).strip()
             if "|" in content:
                 parts = content.split("|")
                 if len(parts) >= 2:
@@ -205,7 +222,7 @@ class ConversationContextReader:
             return []
 
         try:
-            content = file_path.read_text()
+            content = self._read_cached(file_path)
             lines = [
                 line.strip()
                 for line in content.splitlines()

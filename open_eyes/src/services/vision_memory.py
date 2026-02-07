@@ -81,11 +81,37 @@ class VisionMemory:
             "reported_at": time.time(),
         })
 
+    # Max items to scan for deduplication (avoids O(n) over full history)
+    _DEDUP_SCAN_DEPTH = 15
+
+    def _is_match(self, desc: str, current_labels: set, recent: dict) -> bool:
+        """Check if a single recent observation matches the candidate."""
+        recent_labels = set(recent["labels"]) if recent["labels"] else set()
+        # Fast path: label overlap pre-filter (set ops are cheap)
+        if current_labels and recent_labels:
+            overlap = len(current_labels & recent_labels) / len(
+                current_labels | recent_labels
+            )
+            if overlap >= self.similarity_threshold:
+                similarity = SequenceMatcher(
+                    None, desc, recent["description"]
+                ).ratio()
+                return similarity >= 0.7
+            return False
+
+        # Fall back to text similarity for label-less observations
+        similarity = SequenceMatcher(
+            None, desc, recent["description"]
+        ).ratio()
+        return similarity >= self.similarity_threshold
+
     def is_duplicate(self, observation: SceneDescription) -> bool:
         """
         Check if this observation is substantially similar to recent ones.
 
-        Uses text similarity between descriptions and label overlap.
+        Uses label overlap as a fast pre-filter, then text similarity
+        only when labels suggest a match. Scans only the most recent
+        observations to bound latency.
 
         Args:
             observation: Scene description to check.
@@ -93,45 +119,43 @@ class VisionMemory:
         Returns:
             True if the observation is too similar to a recent one.
         """
-        for recent in reversed(self._observations):
-            similarity = SequenceMatcher(
-                None, observation.description, recent["description"]
-            ).ratio()
-            if similarity >= self.similarity_threshold:
-                return True
+        current_labels = set(observation.object_labels)
+        desc = observation.description
+        items = list(self._observations)[-self._DEDUP_SCAN_DEPTH:]
 
-            # Also check label overlap
-            if observation.object_labels and recent["labels"]:
-                label_set = set(observation.object_labels)
-                recent_set = set(recent["labels"])
-                if label_set and recent_set:
-                    overlap = len(label_set & recent_set) / len(
-                        label_set | recent_set
-                    )
-                    if overlap >= self.similarity_threshold:
-                        # Labels are very similar — check if description also close
-                        if similarity >= 0.7:
-                            return True
+        return any(self._is_match(desc, current_labels, r) for r in reversed(items))
 
-        return False
-
-    def was_recently_reported(self, observation: SceneDescription) -> bool:
+    def was_recently_reported(
+        self,
+        observation: SceneDescription,
+        window_seconds: float = settings.RECENTLY_REPORTED_WINDOW,
+    ) -> bool:
         """
-        Check if a similar observation was recently reported.
+        Check if a similar observation was reported within a time window.
+
+        Only considers observations reported in the last *window_seconds*.
+        This prevents stale reports from permanently blocking new ones
+        when the scene hasn't changed much.
 
         Args:
             observation: Scene description to check.
+            window_seconds: Only consider reports within this many seconds.
 
         Returns:
             True if a similar observation was reported recently.
         """
-        for reported in reversed(self._reported):
-            similarity = SequenceMatcher(
-                None, observation.description, reported["description"]
-            ).ratio()
-            if similarity >= self.similarity_threshold:
-                return True
-        return False
+        desc = observation.description
+        cutoff = time.time() - window_seconds
+        items = [
+            r for r in list(self._reported)[-self._DEDUP_SCAN_DEPTH:]
+            if r.get("reported_at", 0) >= cutoff
+        ]
+
+        return any(
+            SequenceMatcher(None, desc, r["description"]).ratio()
+            >= self.similarity_threshold
+            for r in reversed(items)
+        )
 
     def get_recent_observations(self, count: int = 10) -> list[dict]:
         """
@@ -215,6 +239,15 @@ class VisionMemory:
                 )
         except Exception as e:
             logger.warning(f"Failed to load vision memory: {e}")
+
+    def clear_session(self) -> None:
+        """Clear short-term dedup state for a fresh session.
+
+        Keeps observations (scene context) but clears the reported
+        tracker so the first observation of a new session always
+        passes the novelty check.
+        """
+        self._reported.clear()
 
     def clear(self) -> None:
         """Clear all memory."""

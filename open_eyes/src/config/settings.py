@@ -77,7 +77,7 @@ MEDIAPIPE_MAX_FACES: int = int(os.getenv("MEDIAPIPE_MAX_FACES", "3"))
 # Relevance Engine
 # ============================================================================
 RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.6"))
-OBSERVATION_COOLDOWN: float = float(os.getenv("OBSERVATION_COOLDOWN", "30.0"))
+OBSERVATION_COOLDOWN: float = float(os.getenv("OBSERVATION_COOLDOWN", "0.0"))
 CONTEXT_WINDOW_LINES: int = int(os.getenv("CONTEXT_WINDOW_LINES", "20"))
 
 # ============================================================================
@@ -87,6 +87,9 @@ MAX_OBSERVATIONS: int = int(os.getenv("MAX_OBSERVATIONS", "100"))
 MAX_REPORTED: int = int(os.getenv("MAX_REPORTED", "50"))
 MEMORY_SIMILARITY_THRESHOLD: float = float(
     os.getenv("MEMORY_SIMILARITY_THRESHOLD", "0.85")
+)
+RECENTLY_REPORTED_WINDOW: float = float(
+    os.getenv("RECENTLY_REPORTED_WINDOW", "120.0")
 )
 
 # ============================================================================
@@ -115,6 +118,7 @@ MAX_STRUCTURED_FILE_SIZE: int = int(
 # Performance Tuning
 # ============================================================================
 MAX_QUEUE_SIZE: int = int(os.getenv("MAX_QUEUE_SIZE", "10"))
+QUEUE_TIMEOUT: float = float(os.getenv("QUEUE_TIMEOUT", "0.1"))
 PROCESSING_TIMEOUT: float = float(os.getenv("PROCESSING_TIMEOUT", "30.0"))
 
 # ============================================================================

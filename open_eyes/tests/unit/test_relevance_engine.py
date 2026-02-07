@@ -50,7 +50,7 @@ class TestRelevanceEngine:
             labels=["person", "desk"],
         )
         score = engine.evaluate(similar)
-        assert score.novelty < 0.3
+        assert score.novelty <= 0.4
 
     def test_context_relevant_observation(self):
         """Observation matching conversation should score high on context."""
