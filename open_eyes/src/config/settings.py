@@ -77,7 +77,7 @@ MEDIAPIPE_MAX_FACES: int = int(os.getenv("MEDIAPIPE_MAX_FACES", "3"))
 # Relevance Engine
 # ============================================================================
 RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.6"))
-OBSERVATION_COOLDOWN: float = float(os.getenv("OBSERVATION_COOLDOWN", "30.0"))
+OBSERVATION_COOLDOWN: float = float(os.getenv("OBSERVATION_COOLDOWN", "5.0"))
 CONTEXT_WINDOW_LINES: int = int(os.getenv("CONTEXT_WINDOW_LINES", "20"))
 
 # ============================================================================
