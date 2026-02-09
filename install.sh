@@ -84,14 +84,44 @@ fi
 # Make scripts executable
 chmod +x "$SCRIPT_DIR/scripts/"*.sh
 
+# Ensure moltsee is on PATH
+MOLTSEE_BIN="$SCRIPT_DIR/venv/bin/moltsee"
+if [ -x "$MOLTSEE_BIN" ]; then
+    BIN_DIR="$SCRIPT_DIR/venv/bin"
+else
+    # Find where pip installed the script (user install)
+    BIN_DIR=$(python3 -c "import sysconfig; print(sysconfig.get_path('scripts', 'posix_user'))" 2>/dev/null || true)
+fi
+
+if [ -n "$BIN_DIR" ] && ! echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then
+    SHELL_RC=""
+    if [ -n "$ZSH_VERSION" ] || [ "$(basename "$SHELL")" = "zsh" ]; then
+        SHELL_RC="$HOME/.zshrc"
+    elif [ -n "$BASH_VERSION" ] || [ "$(basename "$SHELL")" = "bash" ]; then
+        SHELL_RC="$HOME/.bashrc"
+    fi
+
+    if [ -n "$SHELL_RC" ]; then
+        EXPORT_LINE="export PATH=\"\$PATH:$BIN_DIR\""
+        if ! grep -qF "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
+            echo "" >> "$SHELL_RC"
+            echo "# Molt-See CLI" >> "$SHELL_RC"
+            echo "$EXPORT_LINE" >> "$SHELL_RC"
+            echo ""
+            echo "Added $BIN_DIR to PATH in $SHELL_RC"
+            echo "Run: source $SHELL_RC   (or open a new terminal)"
+        fi
+        export PATH="$PATH:$BIN_DIR"
+    fi
+fi
+
 echo ""
 echo "=== Installation Complete ==="
 echo ""
 echo "Next steps:"
 echo "  1. Edit $SCRIPT_DIR/.env with your settings (especially ANTHROPIC_API_KEY for VLM)"
 echo "  2. Grant camera permissions when prompted on first run"
-echo "  3. Start pipeline:  moltsee start"
-echo "  4. Launch viewer:   moltsee viewer"
-echo "  5. Stop everything: moltsee stop"
-echo "  6. Check status:    moltsee status"
+echo "  3. Run everything:  moltsee run"
+echo "  4. Stop everything: moltsee stop"
+echo "  5. Check status:    moltsee status"
 echo ""
