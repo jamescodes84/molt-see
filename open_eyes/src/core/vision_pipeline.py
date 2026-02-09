@@ -7,10 +7,9 @@ threaded workers.
 
 Thread architecture:
 - Thread 1 (Capture): Camera frames -> capture_queue
-- Thread 2 (Detection): capture_queue -> changed frames -> analysis_queue
-- Thread 3 (Analysis): analysis_queue -> SceneDescription -> output_queue
-- Thread 4 (Output): output_queue -> relevance scoring -> visual_observations.txt
-- Thread 5 (Display): Terminal visualization (optional)
+- Thread 2 (Detect+Analyze): capture_queue -> change detect -> analyze -> output_queue
+- Thread 3 (Output): output_queue -> relevance scoring -> visual_observations.txt
+- Thread 4 (Display): Terminal visualization (optional)
 """
 
 import json
@@ -84,7 +83,6 @@ class VisionPipeline:
         # Inter-thread queues
         max_q = settings.MAX_QUEUE_SIZE
         self._capture_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=max_q)
-        self._analysis_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=max_q)
         self._output_queue: queue.Queue[SceneDescription] = queue.Queue(maxsize=max_q)
 
         # Components
@@ -162,8 +160,7 @@ class VisionPipeline:
         # Start threads
         thread_configs = [
             ("eyes-capture", self._capture_loop),
-            ("eyes-detection", self._detection_loop),
-            ("eyes-analysis", self._analysis_loop),
+            ("eyes-analysis", self._detect_and_analyze_loop),
             ("eyes-output", self._output_loop),
         ]
         if settings.FACE_TRACKER_ENABLED:
@@ -278,27 +275,50 @@ class VisionPipeline:
         except Exception as e:
             logger.debug(f"Failed to write latest frame: {e}")
 
-    def _detection_loop(self) -> None:
-        """Thread 2: Check for scene changes, pass changed frames."""
+    def _detect_and_analyze_loop(self) -> None:
+        """Thread 2: Change detection + scene analysis in one pass (no intermediate queue)."""
+        analyzer_failed = False
         while self._running:
             try:
                 frame = self._capture_queue.get(timeout=settings.QUEUE_TIMEOUT)
                 magnitude = self._change_detector.get_change_magnitude(frame)
                 self.state_manager.update_change_magnitude(magnitude)
 
-                if self._change_detector.has_scene_changed(frame):
-                    logger.debug(
-                        f"Scene change detected (magnitude={magnitude:.3f})"
-                    )
-                    self._change_detector.update_reference(frame)
-                    try:
-                        self._analysis_queue.put_nowait(frame)
-                    except queue.Full:
-                        pass
+                if not self._change_detector.has_scene_changed(frame):
+                    continue
+
+                logger.debug(f"Scene change detected (magnitude={magnitude:.3f})")
+                self._change_detector.update_reference(frame)
+
+                if not analyzer_failed:
+                    analyzer_failed = self._analyze_frame(frame)
             except queue.Empty:
                 continue
             except Exception as e:
-                logger.error(f"Detection error: {e}")
+                logger.error(f"Detect/analyze error: {e}")
+
+    def _analyze_frame(self, frame: np.ndarray) -> bool:
+        """Run scene analysis on a changed frame. Returns True if analyzer failed permanently."""
+        try:
+            self._notifier.notify_analyzing(self._analyzer.__class__.__name__)
+            self.state_manager.set_analyzing()
+
+            result = self._analyzer.analyze(frame)
+            logger.debug(
+                f"Analysis: {result.description} "
+                f"({result.processing_time_ms:.0f}ms)"
+            )
+            self._write_latest_detections(result)
+
+            try:
+                self._output_queue.put_nowait(result)
+            except queue.Full:
+                pass
+            return False
+        except RuntimeError as e:
+            logger.error(f"Analyzer unavailable, disabling analysis: {e}")
+            self._notifier.notify_error(str(e))
+            return True
 
     @staticmethod
     def _serialize_detected_object(obj: DetectedObject) -> dict:
@@ -341,42 +361,6 @@ class VisionPipeline:
             tmp_file.rename(settings.LATEST_DETECTIONS_FILE)
         except Exception as e:
             logger.debug(f"Failed to write latest detections: {e}")
-
-    def _analysis_loop(self) -> None:
-        """Thread 3: Run scene analysis on changed frames."""
-        analyzer_failed = False
-        while self._running:
-            try:
-                frame = self._analysis_queue.get(timeout=settings.QUEUE_TIMEOUT)
-
-                if analyzer_failed:
-                    continue  # Drain queue, don't retry broken analyzer
-
-                self._notifier.notify_analyzing(
-                    self._analyzer.__class__.__name__
-                )
-                self.state_manager.set_analyzing()
-
-                result = self._analyzer.analyze(frame)
-                logger.debug(
-                    f"Analysis: {result.description} "
-                    f"({result.processing_time_ms:.0f}ms)"
-                )
-                self._write_latest_detections(result)
-
-                try:
-                    self._output_queue.put_nowait(result)
-                except queue.Full:
-                    pass
-            except queue.Empty:
-                continue
-            except RuntimeError as e:
-                if not analyzer_failed:
-                    logger.error(f"Analyzer unavailable, disabling analysis: {e}")
-                    self._notifier.notify_error(str(e))
-                    analyzer_failed = True
-            except Exception as e:
-                logger.error(f"Analysis error: {e}")
 
     def _output_loop(self) -> None:
         """Thread 4: Score relevance and write observations."""

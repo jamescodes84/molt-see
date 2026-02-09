@@ -24,7 +24,7 @@ RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 # Camera Configuration
 # ============================================================================
 CAMERA_DEVICE_INDEX: int = int(os.getenv("CAMERA_DEVICE_INDEX", "0"))
-CAPTURE_FPS: float = float(os.getenv("CAPTURE_FPS", "5.0"))
+CAPTURE_FPS: float = float(os.getenv("CAPTURE_FPS", "10.0"))
 CAPTURE_RESOLUTION_W: int = int(os.getenv("CAPTURE_RESOLUTION_W", "640"))
 CAPTURE_RESOLUTION_H: int = int(os.getenv("CAPTURE_RESOLUTION_H", "480"))
 WARMUP_FRAMES: int = int(os.getenv("WARMUP_FRAMES", "5"))
@@ -36,7 +36,7 @@ CHANGE_SIMILARITY_THRESHOLD: float = float(
     os.getenv("CHANGE_SIMILARITY_THRESHOLD", "0.92")
 )
 CHANGE_MIN_AREA: float = float(os.getenv("CHANGE_MIN_AREA", "0.05"))
-CHANGE_METHOD: str = os.getenv("CHANGE_METHOD", "ssim")
+CHANGE_METHOD: str = os.getenv("CHANGE_METHOD", "pixel_diff")
 
 # ============================================================================
 # Scene Analysis
@@ -77,13 +77,13 @@ MEDIAPIPE_MAX_FACES: int = int(os.getenv("MEDIAPIPE_MAX_FACES", "3"))
 # Relevance Engine
 # ============================================================================
 RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.6"))
-OBSERVATION_COOLDOWN: float = float(os.getenv("OBSERVATION_COOLDOWN", "2.0"))
+OBSERVATION_COOLDOWN: float = float(os.getenv("OBSERVATION_COOLDOWN", "0"))
 CONTEXT_WINDOW_LINES: int = int(os.getenv("CONTEXT_WINDOW_LINES", "20"))
 
 # Per-tier cooldowns (seconds)
-TIER_SCENE_COOLDOWN: float = float(os.getenv("TIER_SCENE_COOLDOWN", "180.0"))
-TIER_ACTIVITY_COOLDOWN: float = float(os.getenv("TIER_ACTIVITY_COOLDOWN", "5.0"))
-TIER_EVENT_COOLDOWN: float = float(os.getenv("TIER_EVENT_COOLDOWN", "2.0"))
+TIER_SCENE_COOLDOWN: float = float(os.getenv("TIER_SCENE_COOLDOWN", "60.0"))
+TIER_ACTIVITY_COOLDOWN: float = float(os.getenv("TIER_ACTIVITY_COOLDOWN", "1.0"))
+TIER_EVENT_COOLDOWN: float = float(os.getenv("TIER_EVENT_COOLDOWN", "0.5"))
 
 # ============================================================================
 # Face Tracker
@@ -147,7 +147,7 @@ ENABLE_TUI_INJECTION: bool = os.getenv(
 # Performance Tuning
 # ============================================================================
 MAX_QUEUE_SIZE: int = int(os.getenv("MAX_QUEUE_SIZE", "10"))
-QUEUE_TIMEOUT: float = float(os.getenv("QUEUE_TIMEOUT", "0.02"))
+QUEUE_TIMEOUT: float = float(os.getenv("QUEUE_TIMEOUT", "0.005"))
 PROCESSING_TIMEOUT: float = float(os.getenv("PROCESSING_TIMEOUT", "30.0"))
 
 # ============================================================================
