@@ -180,8 +180,64 @@ class VisionPipeline:
             f"Vision pipeline started with {len(self._threads)} threads"
         )
         self.state_manager.set_idle()
-        self._tui.send_online()
+
+        # Write agent instructions file and announce via TUI
+        instructions_path = self._write_agent_instructions()
+        self._tui.send_online(str(instructions_path))
         return True
+
+    def _write_agent_instructions(self) -> Path:
+        """Write the agent instructions file and return its path."""
+        instructions_file = settings.AGENT_INSTRUCTIONS_FILE
+        context_file = settings.VISUAL_CONTEXT_FILE
+
+        instructions = f"""=== Molt-See Vision System Active ===
+
+VISUAL PERCEPTION ENABLED:
+You can now SEE through the user's webcam. Your current visual context is at:
+{context_file}
+
+HOW TO USE YOUR VISION:
+Read the file above when visual context would help your response. It contains:
+- SCENE: The current environment (room, setting, objects)
+- ACTIVITY: What the user is currently doing
+- EXPRESSION: Detected facial expression
+- RECENT EVENTS: Notable things that just happened
+
+You don't need to check every turn — just when visual awareness seems relevant,
+such as when the user mentions something physical, when you want to make a
+natural observation, or when you sense the environment may have changed.
+
+HOW TO REFERENCE WHAT YOU SEE:
+- Be natural, like a human casually noticing things
+- "I notice you picked up your coffee" or "Looks like someone just walked in"
+- Do NOT say "According to my visual context file..." or "The camera shows..."
+- Only mention observations when relevant to the conversation
+- You can proactively mention something interesting you notice
+- Don't repeat things you've already mentioned
+
+IMPORTANT — HANDLING VISION VARIABILITY:
+The vision model's descriptions may vary between frames even when the scene
+hasn't actually changed. Do NOT interpret minor wording differences as real
+changes. In particular:
+- If the scene description changes slightly but the setting is the same,
+  do NOT announce "the scene is stable" or narrate non-changes
+- Only mention changes you're confident actually happened
+- If the user leaves and comes back into frame, you can welcome them back
+  naturally ("Hey, welcome back!" or "Oh, you're back")
+- If no person/head is visible, you may note the user stepped away if it
+  seems relevant, but don't keep repeating it
+
+==="""
+
+        try:
+            instructions_file.parent.mkdir(parents=True, exist_ok=True)
+            instructions_file.write_text(instructions)
+            logger.info(f"Agent instructions written to {instructions_file}")
+        except Exception as e:
+            logger.error(f"Failed to write agent instructions: {e}")
+
+        return instructions_file
 
     def stop(self) -> None:
         """Gracefully stop all threads and release resources."""
@@ -201,6 +257,12 @@ class VisionPipeline:
 
         # Cleanup
         self._notifier.cleanup()
+        try:
+            instructions_file = settings.AGENT_INSTRUCTIONS_FILE
+            if instructions_file.exists():
+                instructions_file.unlink()
+        except Exception:
+            pass
         self.state_manager.set_stopped()
         logger.info("Vision pipeline stopped")
 
@@ -454,9 +516,6 @@ class VisionPipeline:
 
         self._update_tier_state(observation, tier, timestamp)
         self._rebuild_visual_context()
-
-        # Inject into agent's Terminal window
-        self._tui.send_observation(observation.description)
 
         self.state_manager.increment_reported()
         logger.info(

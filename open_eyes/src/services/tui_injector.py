@@ -84,17 +84,13 @@ end tell
 
         return False
 
-    def send_online(self) -> None:
-        """Announce vision system online."""
-        ctx_path = settings.VISUAL_CONTEXT_FILE
+    def send_online(self, instructions_file: str) -> None:
+        """Announce vision system online with instructions file path."""
         self.inject(
-            f"[MOLT SEE: ONLINE] - Visual context at {ctx_path}"
+            f"[MOLT SEE: ONLINE] - Do not respond until after you've "
+            f"read instructions at {instructions_file}"
         )
 
     def send_offline(self) -> None:
         """Announce vision system offline."""
         self.inject("[MOLT SEE: OFFLINE]")
-
-    def send_observation(self, description: str) -> None:
-        """Send a visual observation to the agent."""
-        self.inject(f"[VISUAL] {description}")
