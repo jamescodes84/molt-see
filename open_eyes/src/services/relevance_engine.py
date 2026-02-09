@@ -41,7 +41,7 @@ class RelevanceEngine:
     }
 
     # Object classes ranked by inherent interest
-    HIGH_INTEREST = {"person", "face", "cat", "dog", "bird", "knife", "scissors"}
+    HIGH_INTEREST = {"person", "face", "hand", "cat", "dog", "bird", "knife", "scissors"}
     MEDIUM_INTEREST = {
         "cell phone", "laptop", "book", "cup", "bottle",
         "backpack", "handbag", "umbrella",
@@ -269,6 +269,7 @@ class RelevanceEngine:
         interesting_keywords = [
             "someone", "walked", "entered", "left", "picked up",
             "put down", "moved", "changed", "appeared", "disappeared",
+            "waving", "raised hand", "pointing",
         ]
         for keyword in interesting_keywords:
             if keyword in desc_lower:

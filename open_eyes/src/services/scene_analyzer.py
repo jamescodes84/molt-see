@@ -388,6 +388,8 @@ class CascadeAnalyzer:
     INTERESTING_CLASSES = {
         # Living things
         "person", "cat", "dog", "bird",
+        # Body parts
+        "hand",
         # Face / emotion
         "face", "face: smiling", "face: talking", "face: surprised",
         "face: frowning", "face: eyes_closed",
@@ -963,6 +965,173 @@ class MediaPipeFaceAnalyzer:
 
     def is_available(self) -> bool:
         """Check if MediaPipe Face Landmarker can be loaded."""
+        return not self._load_failed
+
+
+# ============================================================================
+# MediaPipe Pose Analyzer (Body Pose + Gesture Recognition)
+# ============================================================================
+
+
+class MediaPipePoseAnalyzer:
+    """
+    Body pose detection and gesture recognition using MediaPipe Pose Landmarker.
+
+    Detects 33 body landmarks per person and classifies gestures
+    (waving, hand raised, etc.) from relative landmark positions.
+    Downloads the model on first use. Runs on CPU, ~15ms per frame.
+    """
+
+    _MODEL_URL = (
+        "https://storage.googleapis.com/mediapipe-models/"
+        "pose_landmarker/pose_landmarker_lite/float16/latest/"
+        "pose_landmarker_lite.task"
+    )
+    _MODEL_FILENAME = "pose_landmarker_lite.task"
+
+    # Landmark indices (MediaPipe Pose 33-point model)
+    _LEFT_SHOULDER = 11
+    _RIGHT_SHOULDER = 12
+    _LEFT_ELBOW = 13
+    _RIGHT_ELBOW = 14
+    _LEFT_WRIST = 15
+    _RIGHT_WRIST = 16
+    _LEFT_HIP = 23
+    _RIGHT_HIP = 24
+
+    # Thresholds
+    _VISIBILITY_THRESHOLD = 0.5
+    _WAVE_Y_MARGIN = 0.08  # wrist must be this much above shoulder (normalized)
+    _WAVE_X_MARGIN = 0.10  # wrist must be this far laterally from shoulder
+
+    def __init__(self, min_detection_confidence: float = 0.5):
+        self.min_detection_confidence = min_detection_confidence
+        self._detector = None
+        self._load_failed = False
+
+    def _get_model_path(self) -> str:
+        """Get path to pose landmarker model, downloading if needed."""
+        import os
+        import urllib.request
+
+        runtime_dir = os.path.join(
+            os.path.dirname(__file__), "..", "..", "..", "runtime"
+        )
+        runtime_dir = os.path.normpath(runtime_dir)
+        os.makedirs(runtime_dir, exist_ok=True)
+
+        model_path = os.path.join(runtime_dir, self._MODEL_FILENAME)
+
+        if not os.path.exists(model_path):
+            logger.info("Downloading MediaPipe pose landmarker model...")
+            urllib.request.urlretrieve(self._MODEL_URL, model_path)
+            logger.info(f"Model saved to {model_path}")
+
+        return model_path
+
+    def _load_model(self) -> None:
+        """Lazy-load MediaPipe Pose Landmarker (Tasks API)."""
+        if self._load_failed:
+            raise RuntimeError(
+                "MediaPipe Pose Landmarker unavailable (previous load failed)"
+            )
+        if self._detector is None:
+            try:
+                import mediapipe as mp
+
+                model_path = self._get_model_path()
+
+                base_options = mp.tasks.BaseOptions(
+                    model_asset_path=model_path
+                )
+                options = mp.tasks.vision.PoseLandmarkerOptions(
+                    base_options=base_options,
+                    num_poses=3,
+                    min_pose_detection_confidence=self.min_detection_confidence,
+                )
+                self._detector = (
+                    mp.tasks.vision.PoseLandmarker.create_from_options(options)
+                )
+                logger.info("MediaPipe Pose Landmarker loaded")
+            except Exception as e:
+                self._load_failed = True
+                logger.error(f"Failed to load MediaPipe Pose Landmarker: {e}")
+                raise
+
+    def detect_gesture(self, frame: np.ndarray) -> tuple[str, bool, int, float]:
+        """
+        Detect body pose and classify gesture.
+
+        Returns:
+            Tuple of (gesture, body_visible, num_people, processing_time_ms).
+            gesture is one of: "waving", "hand_raised", "both_hands_raised", "none".
+        """
+        import mediapipe as mp
+
+        self._load_model()
+        start = time.time()
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        result = self._detector.detect(mp_image)
+        elapsed_ms = (time.time() - start) * 1000
+
+        if not result.pose_landmarks:
+            return "none", False, 0, elapsed_ms
+
+        num_people = len(result.pose_landmarks)
+        # Classify gesture from the first (closest) person
+        landmarks = result.pose_landmarks[0]
+        gesture = self._classify_gesture(landmarks)
+
+        return gesture, True, num_people, elapsed_ms
+
+    def _classify_gesture(self, landmarks) -> str:
+        """Classify gesture from pose landmarks.
+
+        In normalized image coordinates: y=0 is top, y=1 is bottom.
+        So 'above' means smaller y value.
+        """
+        left_raised, l_lateral = self._check_hand_raised(
+            landmarks, self._LEFT_WRIST, self._LEFT_SHOULDER
+        )
+        right_raised, r_lateral = self._check_hand_raised(
+            landmarks, self._RIGHT_WRIST, self._RIGHT_SHOULDER
+        )
+
+        if left_raised and right_raised:
+            return "both_hands_raised"
+
+        if left_raised:
+            return "waving" if l_lateral > self._WAVE_X_MARGIN else "hand_raised"
+
+        if right_raised:
+            return "waving" if r_lateral > self._WAVE_X_MARGIN else "hand_raised"
+
+        return "none"
+
+    def _check_hand_raised(
+        self, landmarks, wrist_idx: int, shoulder_idx: int
+    ) -> tuple[bool, float]:
+        """Check if a hand is raised above its shoulder.
+
+        Returns (is_raised, lateral_distance).
+        """
+        wrist = landmarks[wrist_idx]
+        shoulder = landmarks[shoulder_idx]
+
+        if (
+            wrist.visibility < self._VISIBILITY_THRESHOLD
+            or shoulder.visibility < self._VISIBILITY_THRESHOLD
+        ):
+            return False, 0.0
+
+        raised = wrist.y < shoulder.y - self._WAVE_Y_MARGIN
+        lateral = abs(wrist.x - shoulder.x)
+        return raised, lateral
+
+    def is_available(self) -> bool:
+        """Check if MediaPipe Pose Landmarker can be loaded."""
         return not self._load_failed
 
 

@@ -46,6 +46,10 @@ class TestVisualContext:
         stub._face_state = None
         stub._face_lock = threading.Lock()
         stub._last_face_expression = "none"
+        # Pose state
+        stub._pose_state = None
+        stub._pose_lock = threading.Lock()
+        stub._last_gesture = "none"
         return stub
 
     def test_context_file_created(self, tmp_path):

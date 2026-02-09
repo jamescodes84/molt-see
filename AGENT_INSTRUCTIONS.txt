@@ -9,6 +9,7 @@ Read the file above when visual context would help your response. It contains:
 - SCENE: The current environment (room, setting, objects)
 - ACTIVITY: What the user is currently doing
 - EXPRESSION: Detected facial expression
+- GESTURE: Body language (waving, hand raised, etc.)
 - RECENT EVENTS: Notable things that just happened
 
 You don't need to check every turn — just when visual awareness seems relevant,

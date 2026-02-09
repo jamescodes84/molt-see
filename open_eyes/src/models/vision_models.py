@@ -98,6 +98,22 @@ class FaceState(BaseModel):
     )
 
 
+class PoseState(BaseModel):
+    """Current body pose / gesture state from the pose tracker."""
+
+    model_config = ConfigDict(frozen=False)
+
+    timestamp: float = Field(..., description="Detection timestamp (epoch)")
+    gesture: str = Field(
+        "none", description="Classified gesture (waving, hand_raised, etc.)"
+    )
+    body_visible: bool = Field(False, description="Whether a body is detected")
+    num_people: int = Field(0, description="Number of people with pose detected")
+    processing_time_ms: float = Field(
+        0.0, description="Pose analysis latency in milliseconds"
+    )
+
+
 class SceneDescription(BaseModel):
     """Result of scene analysis."""
 

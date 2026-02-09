@@ -60,7 +60,7 @@ YOLO_WORLD_CLASSES: list[str] = [
     c.strip()
     for c in os.getenv(
         "YOLO_WORLD_CLASSES",
-        "person,guitar,piano,microphone,headphones,camera,monitor,keyboard,"
+        "person,hand,guitar,piano,microphone,headphones,camera,monitor,keyboard,"
         "desk,chair,book,cup,mug,bottle,phone,laptop,cat,dog,backpack,"
         "plant,picture frame,clock,lamp,speaker,cable,whiteboard",
     ).split(",")
@@ -94,6 +94,13 @@ FACE_TRACKER_ENABLED: bool = os.getenv(
 FACE_TRACKER_INTERVAL: float = float(os.getenv("FACE_TRACKER_INTERVAL", "1.0"))
 FACE_EXPRESSION_CHANGE_ONLY: bool = os.getenv(
     "FACE_EXPRESSION_CHANGE_ONLY", "true"
+).lower() == "true"
+
+# ============================================================================
+# Pose / Gesture Tracker
+# ============================================================================
+POSE_TRACKER_ENABLED: bool = os.getenv(
+    "POSE_TRACKER_ENABLED", "true"
 ).lower() == "true"
 
 # ============================================================================

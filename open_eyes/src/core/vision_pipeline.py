@@ -30,6 +30,7 @@ from ..models.vision_models import (
     FaceState,
     ObservationTier,
     ObservationType,
+    PoseState,
     RelevanceScore,
     SceneDescription,
 )
@@ -119,6 +120,11 @@ class VisionPipeline:
         self._face_lock = threading.Lock()
         self._last_face_expression: str = "none"
 
+        # Pose tracker state
+        self._pose_state: Optional[PoseState] = None
+        self._pose_lock = threading.Lock()
+        self._last_gesture: str = "none"
+
         # Threads
         self._threads: list[threading.Thread] = []
 
@@ -165,6 +171,8 @@ class VisionPipeline:
         ]
         if settings.FACE_TRACKER_ENABLED:
             thread_configs.append(("eyes-face", self._face_tracker_loop))
+        if settings.POSE_TRACKER_ENABLED:
+            thread_configs.append(("eyes-pose", self._pose_tracker_loop))
         if self.enable_display:
             thread_configs.append(("eyes-display", self._display_loop))
 
@@ -500,6 +508,13 @@ class VisionPipeline:
             lines.append(face.primary_expression)
             lines.append("")
 
+        with self._pose_lock:
+            pose = self._pose_state
+        if pose and pose.gesture != "none":
+            lines.append("GESTURE:")
+            lines.append(pose.gesture.replace("_", " "))
+            lines.append("")
+
         if self._recent_events:
             lines.append("RECENT EVENTS:")
             for event in self._recent_events:
@@ -582,6 +597,7 @@ class VisionPipeline:
         event_keywords = [
             "entered", "left", "walked in", "appeared", "disappeared",
             "picked up", "put down", "grabbed", "dropped",
+            "waving", "hand raised", "hands raised", "pointing",
         ]
         if any(kw in desc for kw in event_keywords):
             return ObservationTier.EVENT
@@ -662,4 +678,52 @@ class VisionPipeline:
                 return
             except Exception as e:
                 logger.error(f"Face tracker error: {e}")
+                time.sleep(settings.FACE_TRACKER_INTERVAL)
+
+    def _pose_tracker_loop(self) -> None:
+        """Independent pose tracker thread — detects body gestures at ~1s intervals."""
+        try:
+            from ..services.scene_analyzer import MediaPipePoseAnalyzer
+        except ImportError:
+            logger.warning("MediaPipe not available, pose tracker disabled")
+            return
+
+        pose_analyzer = MediaPipePoseAnalyzer()
+        if not pose_analyzer.is_available():
+            logger.warning("MediaPipe pose analyzer not available, pose tracker disabled")
+            return
+
+        logger.info("Pose tracker thread started")
+        while self._running:
+            try:
+                frame = self._camera.get_frame()
+                if frame is None:
+                    time.sleep(settings.FACE_TRACKER_INTERVAL)
+                    continue
+
+                gesture, body_visible, num_people, elapsed = (
+                    pose_analyzer.detect_gesture(frame)
+                )
+                pose_state = PoseState(
+                    timestamp=time.time(),
+                    gesture=gesture,
+                    body_visible=body_visible,
+                    num_people=num_people,
+                    processing_time_ms=elapsed,
+                )
+
+                with self._pose_lock:
+                    self._pose_state = pose_state
+
+                # Update context only when gesture changes
+                if gesture != self._last_gesture:
+                    self._last_gesture = gesture
+                    self._rebuild_visual_context()
+
+                time.sleep(settings.FACE_TRACKER_INTERVAL)
+            except (RuntimeError, ImportError) as e:
+                logger.warning(f"Pose tracker unavailable, stopping: {e}")
+                return
+            except Exception as e:
+                logger.error(f"Pose tracker error: {e}")
                 time.sleep(settings.FACE_TRACKER_INTERVAL)
