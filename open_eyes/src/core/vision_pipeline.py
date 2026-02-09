@@ -40,6 +40,7 @@ from ..services.change_detector import ChangeDetector
 from ..services.context_reader import ConversationContextReader
 from ..services.eyes_status_notifier import EyesStatusNotifier
 from ..services.relevance_engine import RelevanceEngine
+from ..services.tui_injector import TuiInjector
 from ..services.vision_memory import VisionMemory
 from .state_manager import StateManager
 
@@ -103,6 +104,7 @@ class VisionPipeline:
             vision_memory=self._vision_memory,
         )
         self._notifier = EyesStatusNotifier()
+        self._tui = TuiInjector()
 
         # Output file
         self._observations_file = settings.VISUAL_OBSERVATIONS_FILE
@@ -178,11 +180,13 @@ class VisionPipeline:
             f"Vision pipeline started with {len(self._threads)} threads"
         )
         self.state_manager.set_idle()
+        self._tui.send_online()
         return True
 
     def stop(self) -> None:
         """Gracefully stop all threads and release resources."""
         logger.info("Stopping vision pipeline...")
+        self._tui.send_offline()
         self._running = False
 
         # Stop camera
@@ -450,6 +454,9 @@ class VisionPipeline:
 
         self._update_tier_state(observation, tier, timestamp)
         self._rebuild_visual_context()
+
+        # Inject into agent's Terminal window
+        self._tui.send_observation(observation.description)
 
         self.state_manager.increment_reported()
         logger.info(

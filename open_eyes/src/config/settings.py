@@ -135,6 +135,14 @@ MAX_STRUCTURED_FILE_SIZE: int = int(
 )
 
 # ============================================================================
+# Agent TUI Injection (AppleScript)
+# ============================================================================
+TARGET_WINDOW_PATTERN: str = os.getenv("TARGET_WINDOW_PATTERN", "openclaw")
+ENABLE_TUI_INJECTION: bool = os.getenv(
+    "ENABLE_TUI_INJECTION", "true"
+).lower() == "true"
+
+# ============================================================================
 # Performance Tuning
 # ============================================================================
 MAX_QUEUE_SIZE: int = int(os.getenv("MAX_QUEUE_SIZE", "10"))
