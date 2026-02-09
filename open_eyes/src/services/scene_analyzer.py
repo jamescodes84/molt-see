@@ -5,6 +5,8 @@ Provides Protocol-based scene analyzers: YOLO for fast local detection,
 VLM for rich semantic descriptions, and a Cascade combining both.
 """
 
+from __future__ import annotations
+
 import base64
 import logging
 import time
