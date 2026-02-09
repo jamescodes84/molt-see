@@ -215,12 +215,6 @@ class VisionPipeline:
                 if frame is not None:
                     self.state_manager.set_capturing(self._camera.frame_count)
                     self._notifier.notify_capturing(self._camera.frame_count)
-                    # Write frame to disk in background thread
-                    threading.Thread(
-                        target=self._write_latest_frame,
-                        args=(frame,),
-                        daemon=True,
-                    ).start()
                     try:
                         self._capture_queue.put_nowait(frame)
                     except queue.Full:
@@ -277,6 +271,7 @@ class VisionPipeline:
                 f"Analysis: {result.description} "
                 f"({result.processing_time_ms:.0f}ms)"
             )
+            self._write_latest_frame(frame)
             self._write_latest_detections(result)
 
             try:
