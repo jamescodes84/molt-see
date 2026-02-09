@@ -8,10 +8,9 @@ threaded workers.
 Thread architecture:
 - Thread 1 (Capture): Camera frames -> capture_queue
 - Thread 2 (Detection): capture_queue -> changed frames -> analysis_queue
-- Thread 3 (Analysis): analysis_queue -> SceneDescription -> relevance_queue
-- Thread 4 (Relevance): relevance_queue -> filtered -> output_queue
-- Thread 5 (Output): output_queue -> visual_observations.txt
-- Thread 6 (Display): Terminal visualization (optional)
+- Thread 3 (Analysis): analysis_queue -> SceneDescription -> output_queue
+- Thread 4 (Output): output_queue -> relevance scoring -> visual_observations.txt
+- Thread 5 (Display): Terminal visualization (optional)
 """
 
 import json
@@ -85,8 +84,7 @@ class VisionPipeline:
         max_q = settings.MAX_QUEUE_SIZE
         self._capture_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=max_q)
         self._analysis_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=max_q)
-        self._relevance_queue: queue.Queue[SceneDescription] = queue.Queue(maxsize=max_q)
-        self._output_queue: queue.Queue[tuple[SceneDescription, RelevanceScore]] = queue.Queue(maxsize=max_q)
+        self._output_queue: queue.Queue[SceneDescription] = queue.Queue(maxsize=max_q)
 
         # Components
         self._camera = CameraCapture(
@@ -164,7 +162,6 @@ class VisionPipeline:
             ("eyes-capture", self._capture_loop),
             ("eyes-detection", self._detection_loop),
             ("eyes-analysis", self._analysis_loop),
-            ("eyes-relevance", self._relevance_loop),
             ("eyes-output", self._output_loop),
         ]
         if settings.FACE_TRACKER_ENABLED:
@@ -330,7 +327,7 @@ class VisionPipeline:
                 self._write_latest_detections(result)
 
                 try:
-                    self._relevance_queue.put_nowait(result)
+                    self._output_queue.put_nowait(result)
                 except queue.Full:
                     pass
             except queue.Empty:
@@ -343,13 +340,15 @@ class VisionPipeline:
             except Exception as e:
                 logger.error(f"Analysis error: {e}")
 
-    def _relevance_loop(self) -> None:
-        """Thread 4: Score all observations, pass everything to output."""
+    def _output_loop(self) -> None:
+        """Thread 4: Score relevance and write observations."""
+        structured_writes = 0
         while self._running:
             try:
-                observation = self._relevance_queue.get(timeout=settings.QUEUE_TIMEOUT)
-                self._vision_memory.record_observation(observation)
+                observation = self._output_queue.get(timeout=settings.QUEUE_TIMEOUT)
 
+                # Inline relevance scoring (was separate thread)
+                self._vision_memory.record_observation(observation)
                 tier = self._classify_tier(observation)
                 observation.tier = tier
 
@@ -365,92 +364,18 @@ class VisionPipeline:
                     self._relevance_engine.mark_reported(tier=tier.value)
                     self._vision_memory.record_reported(observation)
 
-                # Always send to output for structured logging;
-                # output loop decides what goes to agent IPC vs full record
-                try:
-                    self._output_queue.put_nowait((observation, score))
-                except queue.Full:
-                    pass
-            except queue.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"Relevance error: {e}")
-
-    def _output_loop(self) -> None:
-        """Thread 5: Record all observations; write agent IPC only for relevant ones."""
-        structured_writes = 0
-        while self._running:
-            try:
-                observation, score = self._output_queue.get(timeout=settings.QUEUE_TIMEOUT)
-
                 obs_type = self._classify_observation(observation)
-                tier = observation.tier or self._classify_tier(observation)
                 timestamp = datetime.now(timezone.utc).isoformat()
 
-                # Always write the full record to structured JSONL
-                structured_record = json.dumps({
-                    "timestamp": timestamp,
-                    "observation_type": obs_type.value,
-                    "tier": tier.value,
-                    "description": observation.description,
-                    "analysis_method": observation.analysis_method,
-                    "processing_time_ms": observation.processing_time_ms,
-                    "relevance_score": round(score.overall_score, 3),
-                    "relevance_factors": {
-                        "novelty": round(score.novelty, 3),
-                        "context_match": round(score.context_match, 3),
-                        "intrinsic_interest": round(score.intrinsic_interest, 3),
-                        "timing": round(score.timing, 3),
-                    },
-                    "reported_to_agent": score.should_report,
-                    "frame_resolution": [
-                        settings.CAPTURE_RESOLUTION_W,
-                        settings.CAPTURE_RESOLUTION_H,
-                    ],
-                    "detected_objects": [
-                        self._serialize_detected_object(obj)
-                        for obj in observation.detected_objects
-                    ],
-                }, separators=(",", ":")) + "\n"
-
-                with open(settings.STRUCTURED_OBSERVATIONS_FILE, "a") as f:
-                    f.write(structured_record)
-
+                self._write_structured_record(
+                    observation, score, obs_type, tier, timestamp
+                )
                 structured_writes += 1
                 if structured_writes % 50 == 0:
                     self._maybe_rotate_structured_file()
 
-                # Only write to agent IPC file when relevant
                 if score.should_report:
-                    # Skip SCENE observations that match what we already have
-                    if (
-                        tier == ObservationTier.SCENE
-                        and self._scene_description
-                        and observation.description == self._scene_description
-                    ):
-                        logger.debug(
-                            "Scene unchanged, skipping duplicate report"
-                        )
-                        continue
-
-                    self.state_manager.set_observing(observation.description)
-                    self._notifier.notify_observing(observation.description)
-
-                    text_line = f"{timestamp}|{obs_type.value}|{observation.description}\n"
-                    with open(self._observations_file, "a") as f:
-                        f.write(text_line)
-
-                    # Route to per-tier state and rebuild context file
-                    self._update_tier_state(observation, tier, timestamp)
-                    self._rebuild_visual_context()
-
-                    self.state_manager.increment_reported()
-                    logger.info(
-                        f"Observation reported [{tier.value}]: "
-                        f"{observation.description}"
-                    )
-                    self._notifier.notify_idle()
-                    self.state_manager.set_idle()
+                    self._report_to_agent(observation, obs_type, tier, timestamp)
                 else:
                     logger.debug(
                         f"Observation recorded (below threshold): "
@@ -461,6 +386,78 @@ class VisionPipeline:
                 continue
             except Exception as e:
                 logger.error(f"Output error: {e}")
+
+    def _write_structured_record(
+        self,
+        observation: SceneDescription,
+        score: RelevanceScore,
+        obs_type: ObservationType,
+        tier: ObservationTier,
+        timestamp: str,
+    ) -> None:
+        """Write a full structured JSONL record for every observation."""
+        record = json.dumps({
+            "timestamp": timestamp,
+            "observation_type": obs_type.value,
+            "tier": tier.value,
+            "description": observation.description,
+            "analysis_method": observation.analysis_method,
+            "processing_time_ms": observation.processing_time_ms,
+            "relevance_score": round(score.overall_score, 3),
+            "relevance_factors": {
+                "novelty": round(score.novelty, 3),
+                "context_match": round(score.context_match, 3),
+                "intrinsic_interest": round(score.intrinsic_interest, 3),
+                "timing": round(score.timing, 3),
+            },
+            "reported_to_agent": score.should_report,
+            "frame_resolution": [
+                settings.CAPTURE_RESOLUTION_W,
+                settings.CAPTURE_RESOLUTION_H,
+            ],
+            "detected_objects": [
+                self._serialize_detected_object(obj)
+                for obj in observation.detected_objects
+            ],
+        }, separators=(",", ":")) + "\n"
+
+        with open(settings.STRUCTURED_OBSERVATIONS_FILE, "a") as f:
+            f.write(record)
+
+    def _report_to_agent(
+        self,
+        observation: SceneDescription,
+        obs_type: ObservationType,
+        tier: ObservationTier,
+        timestamp: str,
+    ) -> None:
+        """Write relevant observation to agent IPC and update visual context."""
+        # Skip SCENE observations that match what we already have
+        if (
+            tier == ObservationTier.SCENE
+            and self._scene_description
+            and observation.description == self._scene_description
+        ):
+            logger.debug("Scene unchanged, skipping duplicate report")
+            return
+
+        self.state_manager.set_observing(observation.description)
+        self._notifier.notify_observing(observation.description)
+
+        text_line = f"{timestamp}|{obs_type.value}|{observation.description}\n"
+        with open(self._observations_file, "a") as f:
+            f.write(text_line)
+
+        self._update_tier_state(observation, tier, timestamp)
+        self._rebuild_visual_context()
+
+        self.state_manager.increment_reported()
+        logger.info(
+            f"Observation reported [{tier.value}]: "
+            f"{observation.description}"
+        )
+        self._notifier.notify_idle()
+        self.state_manager.set_idle()
 
     def _update_tier_state(
         self,
