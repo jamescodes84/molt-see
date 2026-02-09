@@ -39,7 +39,6 @@ VISION_MEMORY_FILE: Path = RUNTIME_DIR / "vision_memory.json"
 EYES_PID_FILE: Path = RUNTIME_DIR / "eyes.pid"
 COORDINATOR_PID_FILE: Path = RUNTIME_DIR / "vision_coordinator.pid"
 EYES_PAUSE_SIGNAL_FILE: Path = RUNTIME_DIR / "eyes_pause.signal"
-AGENT_INSTRUCTIONS_FILE: Path = RUNTIME_DIR / "agent_instructions.active"
 AGENT_SHUTDOWN_SIGNAL_FILE: Path = RUNTIME_DIR / "agent_shutdown.signal"
 
 # ============================================================================

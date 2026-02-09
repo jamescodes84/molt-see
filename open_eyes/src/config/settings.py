@@ -129,7 +129,6 @@ VISION_MEMORY_FILE: Path = RUNTIME_DIR / "vision_memory.json"
 LATEST_DETECTIONS_FILE: Path = RUNTIME_DIR / "latest_detections.json"
 STRUCTURED_OBSERVATIONS_FILE: Path = RUNTIME_DIR / "structured_observations.jsonl"
 VISUAL_CONTEXT_FILE: Path = RUNTIME_DIR / "visual_context.txt"
-AGENT_INSTRUCTIONS_FILE: Path = RUNTIME_DIR / "agent_instructions.active"
 LATEST_FRAME_FILE: Path = RUNTIME_DIR / "latest_frame.jpg"
 MAX_STRUCTURED_FILE_SIZE: int = int(
     os.getenv("MAX_STRUCTURED_FILE_SIZE", str(10 * 1024 * 1024))  # 10MB default

@@ -178,35 +178,10 @@ class VisionPipeline:
         )
         self.state_manager.set_idle()
 
-        # Write agent instructions file and announce via TUI
-        instructions_path = self._write_agent_instructions()
+        # Announce via TUI — point agent directly to AGENT_INSTRUCTIONS.txt
+        instructions_path = settings.PROJECT_DIR / "AGENT_INSTRUCTIONS.txt"
         self._tui.send_online(str(instructions_path))
         return True
-
-    def _write_agent_instructions(self) -> Path:
-        """Read AGENT_INSTRUCTIONS.txt template, substitute placeholders, write to runtime."""
-        instructions_file = settings.AGENT_INSTRUCTIONS_FILE
-        template_file = settings.PROJECT_DIR / "AGENT_INSTRUCTIONS.txt"
-
-        try:
-            template = template_file.read_text()
-            instructions = template.replace(
-                "{{VISUAL_CONTEXT_FILE}}", str(settings.VISUAL_CONTEXT_FILE)
-            )
-        except FileNotFoundError:
-            logger.error(f"Template not found: {template_file}")
-            instructions = (
-                f"Molt-See active. Visual context at: {settings.VISUAL_CONTEXT_FILE}"
-            )
-
-        try:
-            instructions_file.parent.mkdir(parents=True, exist_ok=True)
-            instructions_file.write_text(instructions)
-            logger.info(f"Agent instructions written to {instructions_file}")
-        except Exception as e:
-            logger.error(f"Failed to write agent instructions: {e}")
-
-        return instructions_file
 
     def stop(self) -> None:
         """Gracefully stop all threads and release resources."""
@@ -226,12 +201,6 @@ class VisionPipeline:
 
         # Cleanup
         self._notifier.cleanup()
-        try:
-            instructions_file = settings.AGENT_INSTRUCTIONS_FILE
-            if instructions_file.exists():
-                instructions_file.unlink()
-        except Exception:
-            pass
         self.state_manager.set_stopped()
         logger.info("Vision pipeline stopped")
 

@@ -56,9 +56,6 @@ class VisionCoordinator:
         pid_file.parent.mkdir(parents=True, exist_ok=True)
         pid_file.write_text(str(os.getpid()))
 
-        # Send vision instructions to agent
-        self._messenger.send_instructions()
-
         # Start OpenClaw Eyes as subprocess
         self._start_eyes()
 

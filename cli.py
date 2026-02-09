@@ -123,7 +123,6 @@ def cmd_stop(_remaining: list[str]) -> None:
     for name in [
         "eyes_status.txt",
         "eyes_pause.signal",
-        "agent_instructions.active",
     ]:
         signal_file = RUNTIME_DIR / name
         signal_file.unlink(missing_ok=True)

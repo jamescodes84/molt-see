@@ -2,7 +2,7 @@
 
 VISUAL PERCEPTION ENABLED:
 You can now SEE through the user's webcam. Your current visual context is at:
-{{VISUAL_CONTEXT_FILE}}
+runtime/visual_context.txt
 
 HOW TO USE YOUR VISION:
 Read the file above when visual context would help your response. It contains:
