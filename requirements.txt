@@ -39,10 +39,9 @@ timm>=0.9.0
 mediapipe>=0.10.0
 
 # ============================================================================
-# Camera Viewer — optional, for scripts/viewer.py
-# Install with: pip install PyQt6
+# Camera Viewer
 # ============================================================================
-# PyQt6>=6.5.0
+PyQt6>=6.5.0
 
 # ============================================================================
 # macOS Menu Bar — optional, for rumps-based menu bar app

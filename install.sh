@@ -40,6 +40,11 @@ echo ""
 echo "Installing core dependencies..."
 "$PIP" install -r "$SCRIPT_DIR/requirements.txt"
 
+# Install CLI (moltsee command)
+echo ""
+echo "Installing moltsee CLI..."
+"$PIP" install -e "$SCRIPT_DIR"
+
 if [ "$MINIMAL" = false ]; then
     # Object detection (YOLO)
     echo ""
@@ -85,7 +90,8 @@ echo ""
 echo "Next steps:"
 echo "  1. Edit $SCRIPT_DIR/.env with your settings (especially ANTHROPIC_API_KEY for VLM)"
 echo "  2. Grant camera permissions when prompted on first run"
-echo "  3. Start with: $PYTHON $SCRIPT_DIR/open_eyes/main.py"
-echo "  4. Or with Molt-Speak: $PYTHON $SCRIPT_DIR/main.py --molt-speak-dir /path/to/molt-speak/runtime"
-echo "  5. Launch viewer: $PYTHON $SCRIPT_DIR/open_eyes/scripts/viewer.py"
+echo "  3. Start pipeline:  moltsee start"
+echo "  4. Launch viewer:   moltsee viewer"
+echo "  5. Stop everything: moltsee stop"
+echo "  6. Check status:    moltsee status"
 echo ""
