@@ -404,6 +404,7 @@ class CascadeAnalyzer:
         fast_analyzer=None,
         detail_analyzer=None,
         vlm_trigger_threshold: float = 0.6,
+        scene_detail_interval: float = settings.TIER_SCENE_COOLDOWN,
     ):
         """
         Initialize cascade analyzer.
@@ -415,11 +416,15 @@ class CascadeAnalyzer:
                 interesting objects found (Moondream, VLM, etc.).
             vlm_trigger_threshold: Min confidence on interesting
                 classes to trigger detail analyzer.
+            scene_detail_interval: Force detail analysis at this
+                interval (seconds) for periodic scene-tier richness.
         """
         self.fast = fast_analyzer or YOLOAnalyzer()
         self.detail = detail_analyzer or MoondreamAnalyzer()
         self.vlm_trigger_threshold = vlm_trigger_threshold
         self._detail_disabled = False
+        self._scene_detail_interval = scene_detail_interval
+        self._last_detail_time: float = 0.0
 
     def analyze(self, frame: np.ndarray) -> SceneDescription:
         """
@@ -435,6 +440,7 @@ class CascadeAnalyzer:
         fast_result = self.fast.analyze(frame)
 
         # Stage 2: Rich description if something interesting was detected
+        # or if enough time has passed for a periodic scene-tier refresh
         if (
             not self._detail_disabled
             and self._should_get_detail(fast_result)
@@ -446,6 +452,7 @@ class CascadeAnalyzer:
             )
             try:
                 detail_result = self.detail.analyze(frame)
+                self._last_detail_time = time.time()
                 # Merge: use detail description but keep structured data
                 detail_result.detected_objects = fast_result.detected_objects
                 detail_result.object_labels = fast_result.object_labels
@@ -468,7 +475,11 @@ class CascadeAnalyzer:
         return fast_result
 
     def _should_get_detail(self, result: SceneDescription) -> bool:
-        """Decide whether to invoke detail analyzer based on screening."""
+        """Decide whether to invoke detail analyzer based on screening or time."""
+        # Periodic scene-tier refresh
+        if (time.time() - self._last_detail_time) >= self._scene_detail_interval:
+            return True
+        # Interesting object detected
         for obj in result.detected_objects:
             if obj.confidence >= self.vlm_trigger_threshold and (
                 obj.label in self.INTERESTING_CLASSES

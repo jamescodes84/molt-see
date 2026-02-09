@@ -57,6 +57,7 @@ class RelevanceEngine:
         cooldown_seconds: float = settings.OBSERVATION_COOLDOWN,
         context_reader: Optional[ConversationContextReader] = None,
         vision_memory: Optional[VisionMemory] = None,
+        tier_cooldowns: Optional[dict[str, float]] = None,
     ):
         """
         Initialize relevance engine.
@@ -66,6 +67,7 @@ class RelevanceEngine:
             cooldown_seconds: Minimum seconds between reports.
             context_reader: For reading conversation context.
             vision_memory: For checking novelty/duplicates.
+            tier_cooldowns: Per-tier cooldown overrides {tier_name: seconds}.
         """
         self.relevance_threshold = relevance_threshold
         self.cooldown_seconds = cooldown_seconds
@@ -74,10 +76,19 @@ class RelevanceEngine:
 
         self._last_report_time: float = 0.0
 
+        # Per-tier cooldown tracking
+        self._tier_cooldowns: dict[str, float] = tier_cooldowns or {
+            "SCENE": settings.TIER_SCENE_COOLDOWN,
+            "ACTIVITY": settings.TIER_ACTIVITY_COOLDOWN,
+            "EVENT": settings.TIER_EVENT_COOLDOWN,
+        }
+        self._tier_last_report: dict[str, float] = {}
+
     def evaluate(
         self,
         observation: SceneDescription,
         conversation_context: Optional[str] = None,
+        tier: Optional[str] = None,
     ) -> RelevanceScore:
         """
         Score an observation's relevance.
@@ -85,6 +96,8 @@ class RelevanceEngine:
         Args:
             observation: Scene description to evaluate.
             conversation_context: Optional override for conversation context.
+            tier: Optional observation tier (e.g. "SCENE", "ACTIVITY", "EVENT").
+                  When provided, uses tier-specific cooldown instead of global.
 
         Returns:
             RelevanceScore with overall score and component breakdown.
@@ -113,7 +126,7 @@ class RelevanceEngine:
         is_override = self._is_high_priority(observation)
         should_report = (
             (overall >= self.relevance_threshold) or is_override
-        ) and self._cooldown_elapsed()
+        ) and self._cooldown_elapsed(tier)
 
         # Build reason
         reason = self._build_reason(
@@ -130,9 +143,12 @@ class RelevanceEngine:
             reason=reason,
         )
 
-    def mark_reported(self) -> None:
+    def mark_reported(self, tier: Optional[str] = None) -> None:
         """Record that a report was just made (for cooldown tracking)."""
-        self._last_report_time = time.time()
+        now = time.time()
+        self._last_report_time = now
+        if tier is not None:
+            self._tier_last_report[tier] = now
 
     def _score_novelty(self, observation: SceneDescription) -> float:
         """
@@ -301,9 +317,13 @@ class RelevanceEngine:
 
         return False
 
-    def _cooldown_elapsed(self) -> bool:
+    def _cooldown_elapsed(self, tier: Optional[str] = None) -> bool:
         """Check if enough time has passed since last report."""
-        return (time.time() - self._last_report_time) >= self.cooldown_seconds
+        now = time.time()
+        if tier is not None and tier in self._tier_cooldowns:
+            last = self._tier_last_report.get(tier, 0.0)
+            return (now - last) >= self._tier_cooldowns[tier]
+        return (now - self._last_report_time) >= self.cooldown_seconds
 
     def _build_reason(
         self,

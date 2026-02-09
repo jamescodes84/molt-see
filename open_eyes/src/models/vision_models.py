@@ -24,6 +24,15 @@ class ObservationType(str, Enum):
     SAFETY_ALERT = "SAFETY_ALERT"
 
 
+class ObservationTier(str, Enum):
+    """Tier controlling cooldown cadence and output section."""
+
+    SCENE = "SCENE"         # Tier 1: environment description (~3 min cooldown)
+    ACTIVITY = "ACTIVITY"   # Tier 2: what's happening (~15s cooldown)
+    EVENT = "EVENT"         # Tier 3: immediate notable events (~5s cooldown)
+    FACE = "FACE"           # Tier 4: expression/sentiment (~1-2s, independent)
+
+
 class FaceLandmark(BaseModel):
     """A single facial landmark point (normalized 0-1)."""
 
@@ -68,6 +77,27 @@ class CapturedFrame(BaseModel):
     )
 
 
+class FaceState(BaseModel):
+    """Current face detection / expression state from the face tracker."""
+
+    model_config = ConfigDict(frozen=False)
+
+    timestamp: float = Field(..., description="Detection timestamp (epoch)")
+    num_faces: int = Field(0, description="Number of faces detected")
+    primary_expression: str = Field(
+        "none", description="Dominant expression of the closest face"
+    )
+    expressions: List[str] = Field(
+        default_factory=list, description="Expressions for all detected faces"
+    )
+    blendshapes: Optional[dict[str, float]] = Field(
+        None, description="Raw blendshape scores for primary face"
+    )
+    processing_time_ms: float = Field(
+        0.0, description="Face analysis latency in milliseconds"
+    )
+
+
 class SceneDescription(BaseModel):
     """Result of scene analysis."""
 
@@ -88,6 +118,9 @@ class SceneDescription(BaseModel):
         0.0, description="Analysis latency in milliseconds"
     )
     frame_number: int = Field(0, description="Source frame number")
+    tier: Optional[ObservationTier] = Field(
+        None, description="Observation tier (set by pipeline)"
+    )
 
 
 class RelevanceScore(BaseModel):

@@ -27,7 +27,14 @@ import cv2
 import numpy as np
 
 from ..config import settings
-from ..models.vision_models import DetectedObject, ObservationType, RelevanceScore, SceneDescription
+from ..models.vision_models import (
+    DetectedObject,
+    FaceState,
+    ObservationTier,
+    ObservationType,
+    RelevanceScore,
+    SceneDescription,
+)
 from ..services.analyzer_factory import create_analyzer
 from ..services.camera_capture import CameraCapture
 from ..services.change_detector import ChangeDetector
@@ -102,9 +109,17 @@ class VisionPipeline:
         # Output file
         self._observations_file = settings.VISUAL_OBSERVATIONS_FILE
 
-        # Recent changes buffer for visual_context.txt (bounded, in-memory)
-        self._recent_changes: list[dict] = []
-        self._max_recent_changes = settings.CONTEXT_MAX_RECENT_CHANGES
+        # Per-tier state for visual_context.txt
+        self._scene_description: str = ""
+        self._scene_objects: list[str] = []
+        self._current_activity: str = ""
+        self._recent_events: list[dict] = []
+        self._max_recent_events = settings.CONTEXT_MAX_RECENT_CHANGES
+
+        # Face tracker state
+        self._face_state: Optional[FaceState] = None
+        self._face_lock = threading.Lock()
+        self._last_face_expression: str = "none"
 
         # Threads
         self._threads: list[threading.Thread] = []
@@ -152,6 +167,8 @@ class VisionPipeline:
             ("eyes-relevance", self._relevance_loop),
             ("eyes-output", self._output_loop),
         ]
+        if settings.FACE_TRACKER_ENABLED:
+            thread_configs.append(("eyes-face", self._face_tracker_loop))
         if self.enable_display:
             thread_configs.append(("eyes-display", self._display_loop))
 
@@ -333,14 +350,19 @@ class VisionPipeline:
                 observation = self._relevance_queue.get(timeout=settings.QUEUE_TIMEOUT)
                 self._vision_memory.record_observation(observation)
 
-                score = self._relevance_engine.evaluate(observation)
+                tier = self._classify_tier(observation)
+                observation.tier = tier
+
+                score = self._relevance_engine.evaluate(
+                    observation, tier=tier.value
+                )
                 logger.debug(
-                    f"Relevance: {score.overall_score:.2f} "
+                    f"Relevance [{tier.value}]: {score.overall_score:.2f} "
                     f"(report={score.should_report}, {score.reason})"
                 )
 
                 if score.should_report:
-                    self._relevance_engine.mark_reported()
+                    self._relevance_engine.mark_reported(tier=tier.value)
                     self._vision_memory.record_reported(observation)
 
                 # Always send to output for structured logging;
@@ -362,12 +384,14 @@ class VisionPipeline:
                 observation, score = self._output_queue.get(timeout=settings.QUEUE_TIMEOUT)
 
                 obs_type = self._classify_observation(observation)
+                tier = observation.tier or self._classify_tier(observation)
                 timestamp = datetime.now(timezone.utc).isoformat()
 
                 # Always write the full record to structured JSONL
                 structured_record = json.dumps({
                     "timestamp": timestamp,
                     "observation_type": obs_type.value,
+                    "tier": tier.value,
                     "description": observation.description,
                     "analysis_method": observation.analysis_method,
                     "processing_time_ms": observation.processing_time_ms,
@@ -405,12 +429,13 @@ class VisionPipeline:
                     with open(self._observations_file, "a") as f:
                         f.write(text_line)
 
-                    # Update bounded context file for agent pull-based reading
-                    self._write_visual_context(observation, obs_type, timestamp)
+                    # Route to per-tier state and rebuild context file
+                    self._update_tier_state(observation, tier, timestamp)
+                    self._rebuild_visual_context()
 
                     self.state_manager.increment_reported()
                     logger.info(
-                        f"Observation reported: [{obs_type.value}] "
+                        f"Observation reported [{tier.value}]: "
                         f"{observation.description}"
                     )
                     self._notifier.notify_idle()
@@ -418,7 +443,7 @@ class VisionPipeline:
                 else:
                     logger.debug(
                         f"Observation recorded (below threshold): "
-                        f"[{obs_type.value}] score={score.overall_score:.2f} "
+                        f"[{tier.value}] score={score.overall_score:.2f} "
                         f"{observation.description[:80]}"
                     )
             except queue.Empty:
@@ -426,60 +451,68 @@ class VisionPipeline:
             except Exception as e:
                 logger.error(f"Output error: {e}")
 
-    def _write_visual_context(
+    def _update_tier_state(
         self,
         observation: SceneDescription,
-        obs_type: ObservationType,
+        tier: ObservationTier,
         timestamp: str,
     ) -> None:
-        """
-        Write a bounded visual context file for agent consumption.
-
-        Overwrites the file atomically with the current scene snapshot
-        and recent notable changes. The agent reads this file on demand
-        to understand what's currently visible.
-        """
-        # Add to recent changes buffer
-        # Parse time portion from ISO timestamp for compact display
+        """Route an observation to the appropriate per-tier state buffer."""
         try:
             time_part = timestamp.split("T")[1][:8]
         except (IndexError, TypeError):
             time_part = timestamp
 
-        self._recent_changes.append({
-            "time": time_part,
-            "type": obs_type.value,
-            "description": observation.description,
-        })
-        # Keep bounded
-        if len(self._recent_changes) > self._max_recent_changes:
-            self._recent_changes = self._recent_changes[-self._max_recent_changes:]
+        if tier == ObservationTier.SCENE:
+            self._scene_description = observation.description
+            self._scene_objects = sorted(set(observation.object_labels)) if observation.object_labels else []
+        elif tier == ObservationTier.ACTIVITY:
+            self._current_activity = observation.description
+        elif tier == ObservationTier.EVENT:
+            self._recent_events.append({
+                "time": time_part,
+                "description": observation.description,
+            })
+            if len(self._recent_events) > self._max_recent_events:
+                self._recent_events = self._recent_events[-self._max_recent_events:]
 
-        # Build context file content
-        labels = sorted(set(observation.object_labels)) if observation.object_labels else []
+    def _rebuild_visual_context(self) -> None:
+        """
+        Rebuild the visual context file from all tier states.
 
-        lines = [
-            f"[Last updated: {timestamp}]",
-            "",
-            "CURRENT SCENE:",
-            observation.description,
-            "",
-        ]
+        Called whenever any tier updates. Produces a layered view:
+        SCENE, ACTIVITY, EXPRESSION, RECENT EVENTS.
+        """
+        timestamp = datetime.now(timezone.utc).isoformat()
 
-        if labels:
-            lines.append(f"OBJECTS: {', '.join(labels)}")
+        lines = [f"[Last updated: {timestamp}]", ""]
+
+        if self._scene_description:
+            lines.append("SCENE:")
+            lines.append(self._scene_description)
+            if self._scene_objects:
+                lines.append(f"Objects: {', '.join(self._scene_objects)}")
             lines.append("")
 
-        if self._recent_changes:
-            lines.append("RECENT CHANGES:")
-            for change in self._recent_changes:
-                lines.append(
-                    f"- {change['time']} | {change['description']}"
-                )
+        if self._current_activity:
+            lines.append("ACTIVITY:")
+            lines.append(self._current_activity)
+            lines.append("")
+
+        with self._face_lock:
+            face = self._face_state
+        if face and face.primary_expression != "none":
+            lines.append("EXPRESSION:")
+            lines.append(face.primary_expression)
+            lines.append("")
+
+        if self._recent_events:
+            lines.append("RECENT EVENTS:")
+            for event in self._recent_events:
+                lines.append(f"- {event['time']} | {event['description']}")
 
         content = "\n".join(lines) + "\n"
 
-        # Atomic write (temp -> rename)
         try:
             context_file = settings.VISUAL_CONTEXT_FILE
             tmp_file = context_file.with_suffix(".tmp")
@@ -545,3 +578,94 @@ class VisionPipeline:
 
         # Default
         return ObservationType.SCENE_CHANGE
+
+    @staticmethod
+    def _classify_tier(observation: SceneDescription) -> ObservationTier:
+        """Classify an observation into a tier for cooldown and output routing."""
+        desc = observation.description.lower()
+
+        # EVENT tier: immediate notable events
+        event_keywords = [
+            "entered", "left", "walked in", "appeared", "disappeared",
+            "picked up", "put down", "grabbed", "dropped",
+        ]
+        if any(kw in desc for kw in event_keywords):
+            return ObservationTier.EVENT
+
+        # Safety is always an event
+        if set(observation.object_labels) & {"knife", "scissors"}:
+            return ObservationTier.EVENT
+
+        # SCENE tier: rich VLM descriptions (cascade_detail, moondream, vlm)
+        if observation.analysis_method in ("cascade_detail", "moondream", "vlm"):
+            return ObservationTier.SCENE
+
+        scene_keywords = ["room", "lighting", "background", "environment", "setting"]
+        if any(kw in desc for kw in scene_keywords):
+            return ObservationTier.SCENE
+
+        # Default: ACTIVITY tier
+        return ObservationTier.ACTIVITY
+
+    @staticmethod
+    def _build_face_state(result: SceneDescription) -> FaceState:
+        """Build a FaceState from a MediaPipe SceneDescription."""
+        expressions = [
+            obj.label.split(":", 1)[1].strip()
+            for obj in result.detected_objects
+            if obj.label.startswith("face:")
+        ]
+        primary = expressions[0] if expressions else "none"
+        blendshapes = None
+        if result.detected_objects and result.detected_objects[0].blendshapes:
+            blendshapes = result.detected_objects[0].blendshapes
+
+        return FaceState(
+            timestamp=time.time(),
+            num_faces=len(result.detected_objects),
+            primary_expression=primary,
+            expressions=expressions,
+            blendshapes=blendshapes,
+            processing_time_ms=result.processing_time_ms,
+        )
+
+    def _face_tracker_loop(self) -> None:
+        """Independent face tracker thread — runs MediaPipe at ~1s intervals."""
+        try:
+            from ..services.scene_analyzer import MediaPipeFaceAnalyzer
+        except ImportError:
+            logger.warning("MediaPipe not available, face tracker disabled")
+            return
+
+        face_analyzer = MediaPipeFaceAnalyzer()
+        if not face_analyzer.is_available():
+            logger.warning("MediaPipe face analyzer not available, face tracker disabled")
+            return
+
+        logger.info("Face tracker thread started")
+        while self._running:
+            try:
+                frame = self._camera.get_frame()
+                if frame is None:
+                    time.sleep(settings.FACE_TRACKER_INTERVAL)
+                    continue
+
+                result = face_analyzer.analyze(frame)
+                face_state = self._build_face_state(result)
+
+                with self._face_lock:
+                    self._face_state = face_state
+
+                # Update context file only when expression changes
+                changed = face_state.primary_expression != self._last_face_expression
+                if not settings.FACE_EXPRESSION_CHANGE_ONLY or changed:
+                    self._last_face_expression = face_state.primary_expression
+                    self._rebuild_visual_context()
+
+                time.sleep(settings.FACE_TRACKER_INTERVAL)
+            except (RuntimeError, ImportError) as e:
+                logger.warning(f"Face tracker unavailable, stopping: {e}")
+                return
+            except Exception as e:
+                logger.error(f"Face tracker error: {e}")
+                time.sleep(settings.FACE_TRACKER_INTERVAL)

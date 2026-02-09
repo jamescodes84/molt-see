@@ -80,6 +80,22 @@ RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.6"))
 OBSERVATION_COOLDOWN: float = float(os.getenv("OBSERVATION_COOLDOWN", "5.0"))
 CONTEXT_WINDOW_LINES: int = int(os.getenv("CONTEXT_WINDOW_LINES", "20"))
 
+# Per-tier cooldowns (seconds)
+TIER_SCENE_COOLDOWN: float = float(os.getenv("TIER_SCENE_COOLDOWN", "180.0"))
+TIER_ACTIVITY_COOLDOWN: float = float(os.getenv("TIER_ACTIVITY_COOLDOWN", "15.0"))
+TIER_EVENT_COOLDOWN: float = float(os.getenv("TIER_EVENT_COOLDOWN", "5.0"))
+
+# ============================================================================
+# Face Tracker
+# ============================================================================
+FACE_TRACKER_ENABLED: bool = os.getenv(
+    "FACE_TRACKER_ENABLED", "true"
+).lower() == "true"
+FACE_TRACKER_INTERVAL: float = float(os.getenv("FACE_TRACKER_INTERVAL", "1.0"))
+FACE_EXPRESSION_CHANGE_ONLY: bool = os.getenv(
+    "FACE_EXPRESSION_CHANGE_ONLY", "true"
+).lower() == "true"
+
 # ============================================================================
 # Vision Memory
 # ============================================================================
