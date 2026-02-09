@@ -41,7 +41,7 @@ class ViewerWindow(QMainWindow):
     """
 
     COMPACT_SIZE = (660, 500)
-    EXPANDED_SIZE = (1100, 560)
+    EXPANDED_SIZE = (1100, 700)
 
     def __init__(self):
         super().__init__()

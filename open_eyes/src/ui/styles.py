@@ -44,6 +44,15 @@ QWidget#StatusPanel {
 
 SECTION_HEADER_STYLE = "color: #7eb8da; font-size: 12px; font-weight: bold;"
 
+# Per-tier header styles
+TIER_SCENE_STYLE = "color: #7eb8da; font-size: 11px; font-weight: bold;"
+TIER_ACTIVITY_STYLE = "color: #69f0ae; font-size: 11px; font-weight: bold;"
+TIER_EXPRESSION_STYLE = "color: #ff80ab; font-size: 11px; font-weight: bold;"
+TIER_EVENTS_STYLE = "color: #ffab40; font-size: 11px; font-weight: bold;"
+
+TIER_CONTENT_STYLE = "color: #d0d0d0; font-size: 11px; padding: 2px 0;"
+TIER_OBJECTS_STYLE = "color: #888; font-size: 10px; padding: 0;"
+
 STATUS_BOX_STYLE = (
     "background-color: #16213e; border-radius: 4px; padding: 8px;"
 )

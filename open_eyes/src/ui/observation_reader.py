@@ -8,7 +8,7 @@ to provide pipeline state and observation history to the viewer.
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -132,3 +132,101 @@ class ObservationReader:
             logger.debug(f"Failed to read observations: {e}")
 
         return list(self._observations)
+
+
+@dataclass
+class VisualContextSnapshot:
+    """Parsed tiered visual context from visual_context.txt."""
+
+    scene: str = ""
+    objects: str = ""
+    activity: str = ""
+    expression: str = ""
+    recent_events: list[str] = field(default_factory=list)
+    last_updated: str = ""
+
+
+class VisualContextReader:
+    """
+    Reads and parses visual_context.txt written by the vision pipeline.
+
+    The file has a tiered format with SCENE, ACTIVITY, EXPRESSION, and
+    RECENT EVENTS sections. This reader parses each section and provides
+    a structured snapshot for the viewer to display.
+    """
+
+    _HEADERS = {"SCENE:", "ACTIVITY:", "EXPRESSION:", "RECENT EVENTS:"}
+    # Sections that persist across blank lines (content may span multiple paragraphs)
+    _PERSISTENT_SECTIONS = {"SCENE:", "RECENT EVENTS:"}
+
+    def __init__(self, context_file: Path):
+        self._file = context_file
+        self._last_mtime: float = 0.0
+        self._latest = VisualContextSnapshot()
+
+    def read(self) -> VisualContextSnapshot:
+        """Read visual context if the file has changed."""
+        try:
+            if not self._file.exists():
+                return self._latest
+
+            mtime = self._file.stat().st_mtime
+            if mtime == self._last_mtime:
+                return self._latest
+
+            self._last_mtime = mtime
+            content = self._file.read_text()
+            self._latest = self._parse(content)
+        except Exception as e:
+            logger.debug(f"Failed to read visual context: {e}")
+
+        return self._latest
+
+    def _parse(self, content: str) -> VisualContextSnapshot:
+        """Parse visual_context.txt into a VisualContextSnapshot."""
+        snap = VisualContextSnapshot()
+
+        # Group lines by section header
+        sections: dict[str, list[str]] = {}
+        current = ""
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped in self._HEADERS:
+                current = stripped
+                sections.setdefault(current, [])
+                continue
+            if stripped.startswith("[Last updated:"):
+                snap.last_updated = stripped.strip("[]")
+                continue
+            if not stripped:
+                if current not in self._PERSISTENT_SECTIONS:
+                    current = ""
+                continue
+            if current:
+                sections.setdefault(current, []).append(stripped)
+
+        # Extract each tier from its collected lines
+        self._extract_scene(snap, sections.get("SCENE:", []))
+        self._extract_text(snap, "activity", sections.get("ACTIVITY:", []))
+        self._extract_text(snap, "expression", sections.get("EXPRESSION:", []))
+        snap.recent_events = [
+            ln[2:] for ln in sections.get("RECENT EVENTS:", []) if ln.startswith("- ")
+        ]
+        return snap
+
+    @staticmethod
+    def _extract_scene(snap: VisualContextSnapshot, lines: list[str]) -> None:
+        """Extract scene description and objects from SCENE section lines."""
+        desc_parts = []
+        for line in lines:
+            if line.startswith("Objects:"):
+                snap.objects = line[len("Objects:"):].strip()
+            else:
+                desc_parts.append(line)
+        snap.scene = " ".join(desc_parts)
+
+    @staticmethod
+    def _extract_text(snap: VisualContextSnapshot, attr: str, lines: list[str]) -> None:
+        """Set a text attribute from section lines (first line only for expression)."""
+        if lines:
+            setattr(snap, attr, " ".join(lines))

@@ -2,7 +2,7 @@
 Status panel widget for expanded viewer mode.
 
 Displays pipeline status, current detections detail, and
-observation history in a side panel.
+tiered visual context (Scene, Activity, Expression, Recent Events).
 """
 
 import logging
@@ -20,8 +20,18 @@ from PyQt6.QtWidgets import (
 )
 
 from .detection_reader import DetectionSnapshot
-from .observation_reader import ObservationReader
-from .styles import LIST_STYLE, SECTION_HEADER_STYLE, STATUS_BOX_STYLE
+from .observation_reader import ObservationReader, VisualContextReader
+from .styles import (
+    LIST_STYLE,
+    SECTION_HEADER_STYLE,
+    STATUS_BOX_STYLE,
+    TIER_ACTIVITY_STYLE,
+    TIER_CONTENT_STYLE,
+    TIER_EVENTS_STYLE,
+    TIER_EXPRESSION_STYLE,
+    TIER_OBJECTS_STYLE,
+    TIER_SCENE_STYLE,
+)
 from . import viewer_settings as vs
 
 logger = logging.getLogger(__name__)
@@ -41,12 +51,15 @@ _STATUS_COLORS = {
 
 class StatusPanel(QWidget):
     """
-    Side panel displaying pipeline status and observation history.
+    Side panel displaying pipeline status and tiered visual context.
 
     Sections:
     1. Pipeline status (color-coded)
     2. Current detection details (object list with confidence)
-    3. Observation history (scrollable list)
+    3. Scene tier (rich environment description)
+    4. Activity tier (what's happening)
+    5. Expression tier (facial expression)
+    6. Recent Events tier (scrollable list)
     """
 
     def __init__(self, parent: Optional[QWidget] = None):
@@ -57,8 +70,10 @@ class StatusPanel(QWidget):
             observations_file=vs.VISUAL_OBSERVATIONS_FILE,
             max_history=vs.MAX_OBSERVATION_HISTORY,
         )
+        self._context_reader = VisualContextReader(
+            context_file=vs.VISUAL_CONTEXT_FILE,
+        )
 
-        self._last_obs_timestamp: str = ""
         self._setup_ui()
         self._setup_timers()
 
@@ -66,7 +81,7 @@ class StatusPanel(QWidget):
         """Build the panel layout."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         self.setMinimumWidth(280)
         self.setMaximumWidth(500)
@@ -98,7 +113,7 @@ class StatusPanel(QWidget):
         layout.addWidget(det_header)
 
         self._detection_list = QListWidget()
-        self._detection_list.setMaximumHeight(150)
+        self._detection_list.setMaximumHeight(120)
         self._detection_list.setStyleSheet(LIST_STYLE)
         layout.addWidget(self._detection_list)
 
@@ -109,25 +124,72 @@ class StatusPanel(QWidget):
 
         layout.addWidget(self._make_divider())
 
-        # --- Section 3: Observation History ---
-        obs_header = QLabel("Observation History")
-        obs_header.setStyleSheet(SECTION_HEADER_STYLE)
-        layout.addWidget(obs_header)
+        # --- Section 3: Scene Tier ---
+        self._scene_header = QLabel("Scene")
+        self._scene_header.setStyleSheet(TIER_SCENE_STYLE)
+        layout.addWidget(self._scene_header)
 
-        self._observation_list = QListWidget()
-        self._observation_list.setWordWrap(True)
-        self._observation_list.setStyleSheet(LIST_STYLE)
-        layout.addWidget(self._observation_list, stretch=1)
+        self._scene_label = QLabel("")
+        self._scene_label.setWordWrap(True)
+        self._scene_label.setStyleSheet(TIER_CONTENT_STYLE)
+        layout.addWidget(self._scene_label)
+
+        self._scene_objects_label = QLabel("")
+        self._scene_objects_label.setWordWrap(True)
+        self._scene_objects_label.setStyleSheet(TIER_OBJECTS_STYLE)
+        layout.addWidget(self._scene_objects_label)
+
+        # --- Section 4: Activity Tier ---
+        self._activity_header = QLabel("Activity")
+        self._activity_header.setStyleSheet(TIER_ACTIVITY_STYLE)
+        layout.addWidget(self._activity_header)
+
+        self._activity_label = QLabel("")
+        self._activity_label.setWordWrap(True)
+        self._activity_label.setStyleSheet(TIER_CONTENT_STYLE)
+        layout.addWidget(self._activity_label)
+
+        # --- Section 5: Expression Tier ---
+        self._expression_header = QLabel("Expression")
+        self._expression_header.setStyleSheet(TIER_EXPRESSION_STYLE)
+        layout.addWidget(self._expression_header)
+
+        self._expression_label = QLabel("")
+        self._expression_label.setFont(QFont("Menlo", 13))
+        self._expression_label.setStyleSheet("color: #ff80ab; padding: 2px 0;")
+        layout.addWidget(self._expression_label)
+
+        # --- Section 6: Recent Events Tier ---
+        self._events_header = QLabel("Recent Events")
+        self._events_header.setStyleSheet(TIER_EVENTS_STYLE)
+        layout.addWidget(self._events_header)
+
+        self._events_list = QListWidget()
+        self._events_list.setStyleSheet(LIST_STYLE)
+        layout.addWidget(self._events_list, stretch=1)
+
+        # Initially hide tier sections until data arrives
+        self._set_tiers_visible(False)
+
+    def _set_tiers_visible(self, visible: bool) -> None:
+        """Show or hide all tier sections at once."""
+        for widget in (
+            self._scene_header, self._scene_label, self._scene_objects_label,
+            self._activity_header, self._activity_label,
+            self._expression_header, self._expression_label,
+            self._events_header, self._events_list,
+        ):
+            widget.setVisible(visible)
 
     def _setup_timers(self) -> None:
-        """Set up polling timers for status and observations."""
+        """Set up polling timers for status and visual context."""
         self._status_timer = QTimer(self)
         self._status_timer.timeout.connect(self._poll_status)
         self._status_timer.start(vs.STATUS_POLL_MS)
 
-        self._obs_timer = QTimer(self)
-        self._obs_timer.timeout.connect(self._poll_observations)
-        self._obs_timer.start(vs.OBSERVATION_POLL_MS)
+        self._context_timer = QTimer(self)
+        self._context_timer.timeout.connect(self._poll_visual_context)
+        self._context_timer.start(vs.CONTEXT_POLL_MS)
 
     def update_detections(self, snapshot: DetectionSnapshot) -> None:
         """
@@ -166,27 +228,38 @@ class StatusPanel(QWidget):
         else:
             self._status_details.setText("Pipeline not connected")
 
-    def _poll_observations(self) -> None:
-        """Poll observation history file."""
-        observations = self._observation_reader.read_observations()
-        if not observations:
-            if self._last_obs_timestamp:
-                self._last_obs_timestamp = ""
-                self._observation_list.clear()
-            return
+    def _poll_visual_context(self) -> None:
+        """Poll visual_context.txt and update tier sections."""
+        ctx = self._context_reader.read()
 
-        newest_ts = observations[-1].timestamp_iso
-        if newest_ts == self._last_obs_timestamp:
-            return
+        has_scene = bool(ctx.scene)
+        self._scene_header.setVisible(has_scene)
+        self._scene_label.setVisible(has_scene)
+        self._scene_objects_label.setVisible(has_scene and bool(ctx.objects))
+        if has_scene:
+            self._scene_label.setText(ctx.scene)
+            if ctx.objects:
+                self._scene_objects_label.setText(f"Objects: {ctx.objects}")
 
-        self._last_obs_timestamp = newest_ts
-        self._observation_list.clear()
-        for obs in reversed(observations):  # newest first
-            time_str = obs.timestamp_iso[11:19] if len(obs.timestamp_iso) >= 19 else ""
-            text = f"[{time_str}] {obs.description}"
-            item = QListWidgetItem(text)
-            item.setToolTip(obs.timestamp_iso)
-            self._observation_list.addItem(item)
+        has_activity = bool(ctx.activity)
+        self._activity_header.setVisible(has_activity)
+        self._activity_label.setVisible(has_activity)
+        if has_activity:
+            self._activity_label.setText(ctx.activity)
+
+        has_expression = bool(ctx.expression)
+        self._expression_header.setVisible(has_expression)
+        self._expression_label.setVisible(has_expression)
+        if has_expression:
+            self._expression_label.setText(ctx.expression)
+
+        has_events = bool(ctx.recent_events)
+        self._events_header.setVisible(has_events)
+        self._events_list.setVisible(has_events)
+        if has_events:
+            self._events_list.clear()
+            for event in reversed(ctx.recent_events):
+                self._events_list.addItem(QListWidgetItem(event))
 
     @staticmethod
     def _make_divider() -> QFrame:
