@@ -146,3 +146,76 @@ class TestVisionMemory:
 
         recent = memory.get_recent_observations(count=3)
         assert len(recent) == 3
+
+    def test_same_scene_dedup_same_labels(self):
+        """Same labels within time window should be detected as same scene."""
+        memory = VisionMemory()
+        obs1 = self._make_observation(
+            "A person in a gray hoodie sits in a living room",
+            labels=["person", "lamp", "guitar"],
+        )
+        memory.record_reported(obs1)
+
+        obs2 = self._make_observation(
+            "A person in a beige hoodie contemplates in a cozy room",
+            labels=["person", "lamp", "guitar"],
+        )
+        assert memory.is_duplicate(obs2) is True
+
+    def test_same_scene_dedup_new_object_is_not_duplicate(self):
+        """New object appearing should not be treated as same scene."""
+        memory = VisionMemory()
+        obs1 = self._make_observation(
+            "A person at a desk",
+            labels=["person", "desk"],
+        )
+        memory.record_reported(obs1)
+
+        obs2 = self._make_observation(
+            "A person at a desk with a cat",
+            labels=["person", "desk", "cat"],
+        )
+        assert memory.is_duplicate(obs2) is False
+
+    def test_same_scene_dedup_object_disappeared_is_not_duplicate(self):
+        """Object disappearing should not be treated as same scene."""
+        memory = VisionMemory()
+        obs1 = self._make_observation(
+            "A person and a cat at a desk",
+            labels=["person", "desk", "cat"],
+        )
+        memory.record_reported(obs1)
+
+        obs2 = self._make_observation(
+            "A person at a desk",
+            labels=["person", "desk"],
+        )
+        assert memory.is_duplicate(obs2) is False
+
+    def test_same_scene_dedup_expired_window(self):
+        """Same labels outside time window should not be treated as same scene."""
+        memory = VisionMemory()
+        obs1 = self._make_observation(
+            "A person at a desk",
+            labels=["person", "desk"],
+        )
+        memory.record_reported(obs1)
+        # Manually expire the reported_at timestamp
+        memory._reported[-1]["reported_at"] = time.time() - 400
+
+        obs2 = self._make_observation(
+            "A person at a desk with different description",
+            labels=["person", "desk"],
+        )
+        # Should not match via _is_same_scene (expired), and descriptions
+        # differ enough that text dedup won't catch it either
+        assert memory._is_same_scene(set(obs2.object_labels)) is False
+
+    def test_same_scene_dedup_no_prior_reports(self):
+        """No prior reports should not trigger same-scene dedup."""
+        memory = VisionMemory()
+        obs = self._make_observation(
+            "A person at a desk",
+            labels=["person", "desk"],
+        )
+        assert memory._is_same_scene(set(obs.object_labels)) is False

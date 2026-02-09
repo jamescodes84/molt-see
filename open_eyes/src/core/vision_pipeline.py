@@ -102,6 +102,10 @@ class VisionPipeline:
         # Output file
         self._observations_file = settings.VISUAL_OBSERVATIONS_FILE
 
+        # Recent changes buffer for visual_context.txt (bounded, in-memory)
+        self._recent_changes: list[dict] = []
+        self._max_recent_changes = settings.CONTEXT_MAX_RECENT_CHANGES
+
         # Threads
         self._threads: list[threading.Thread] = []
 
@@ -130,13 +134,15 @@ class VisionPipeline:
         # Clear session files (short-term only; long-term memory handled elsewhere)
         self._observations_file.parent.mkdir(parents=True, exist_ok=True)
         self._observations_file.write_text("")
-        try:
-            settings.STRUCTURED_OBSERVATIONS_FILE.parent.mkdir(
-                parents=True, exist_ok=True
-            )
-            settings.STRUCTURED_OBSERVATIONS_FILE.write_text("")
-        except Exception as e:
-            logger.debug(f"Failed to clear structured observations: {e}")
+        for clear_file in [
+            settings.STRUCTURED_OBSERVATIONS_FILE,
+            settings.VISUAL_CONTEXT_FILE,
+        ]:
+            try:
+                clear_file.parent.mkdir(parents=True, exist_ok=True)
+                clear_file.write_text("")
+            except Exception as e:
+                logger.debug(f"Failed to clear {clear_file.name}: {e}")
 
         # Start threads
         thread_configs = [
@@ -399,6 +405,9 @@ class VisionPipeline:
                     with open(self._observations_file, "a") as f:
                         f.write(text_line)
 
+                    # Update bounded context file for agent pull-based reading
+                    self._write_visual_context(observation, obs_type, timestamp)
+
                     self.state_manager.increment_reported()
                     logger.info(
                         f"Observation reported: [{obs_type.value}] "
@@ -416,6 +425,68 @@ class VisionPipeline:
                 continue
             except Exception as e:
                 logger.error(f"Output error: {e}")
+
+    def _write_visual_context(
+        self,
+        observation: SceneDescription,
+        obs_type: ObservationType,
+        timestamp: str,
+    ) -> None:
+        """
+        Write a bounded visual context file for agent consumption.
+
+        Overwrites the file atomically with the current scene snapshot
+        and recent notable changes. The agent reads this file on demand
+        to understand what's currently visible.
+        """
+        # Add to recent changes buffer
+        # Parse time portion from ISO timestamp for compact display
+        try:
+            time_part = timestamp.split("T")[1][:8]
+        except (IndexError, TypeError):
+            time_part = timestamp
+
+        self._recent_changes.append({
+            "time": time_part,
+            "type": obs_type.value,
+            "description": observation.description,
+        })
+        # Keep bounded
+        if len(self._recent_changes) > self._max_recent_changes:
+            self._recent_changes = self._recent_changes[-self._max_recent_changes:]
+
+        # Build context file content
+        labels = sorted(set(observation.object_labels)) if observation.object_labels else []
+
+        lines = [
+            f"[Last updated: {timestamp}]",
+            "",
+            "CURRENT SCENE:",
+            observation.description,
+            "",
+        ]
+
+        if labels:
+            lines.append(f"OBJECTS: {', '.join(labels)}")
+            lines.append("")
+
+        if self._recent_changes:
+            lines.append("RECENT CHANGES:")
+            for change in self._recent_changes:
+                lines.append(
+                    f"- {change['time']} | {change['description']}"
+                )
+
+        content = "\n".join(lines) + "\n"
+
+        # Atomic write (temp -> rename)
+        try:
+            context_file = settings.VISUAL_CONTEXT_FILE
+            tmp_file = context_file.with_suffix(".tmp")
+            tmp_file.write_text(content)
+            tmp_file.rename(context_file)
+        except Exception as e:
+            logger.debug(f"Failed to write visual context: {e}")
 
     def _maybe_rotate_structured_file(self) -> None:
         """Truncate structured observations file if it exceeds max size."""

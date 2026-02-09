@@ -110,8 +110,9 @@ class VisionMemory:
         Check if this observation is substantially similar to recent ones.
 
         Uses label overlap as a fast pre-filter, then text similarity
-        only when labels suggest a match. Scans only the most recent
-        observations to bound latency.
+        only when labels suggest a match. Also checks for same-scene
+        conditions where the primary objects haven't changed. Scans only
+        the most recent observations to bound latency.
 
         Args:
             observation: Scene description to check.
@@ -121,9 +122,62 @@ class VisionMemory:
         """
         current_labels = set(observation.object_labels)
         desc = observation.description
-        items = list(self._observations)[-self._DEDUP_SCAN_DEPTH:]
 
+        # Scene-level dedup: same objects present within time window
+        if current_labels and self._is_same_scene(current_labels):
+            return True
+
+        items = list(self._observations)[-self._DEDUP_SCAN_DEPTH:]
         return any(self._is_match(desc, current_labels, r) for r in reversed(items))
+
+    def _is_same_scene(
+        self,
+        current_labels: set[str],
+        window_seconds: float = settings.SCENE_DEDUP_WINDOW,
+    ) -> bool:
+        """
+        Check if the scene is fundamentally unchanged from the last report.
+
+        If the same primary objects are still visible and the last report
+        was recent, treat this as the same scene even if VLM descriptions
+        vary. A scene is considered "changed" when a significant new object
+        appears or a primary object disappears.
+
+        Args:
+            current_labels: Object labels from the current observation.
+            window_seconds: Time window to consider same-scene (default 5 min).
+
+        Returns:
+            True if this looks like the same scene as the last report.
+        """
+        if not self._reported:
+            return False
+
+        last_reported = self._reported[-1]
+        reported_at = last_reported.get("reported_at", 0)
+
+        # Only apply within the time window
+        if time.time() - reported_at > window_seconds:
+            return False
+
+        last_labels = set(last_reported.get("labels", []))
+        if not last_labels:
+            return False
+
+        # Check if a significant new object appeared (not just noise)
+        new_objects = current_labels - last_labels
+        disappeared = last_labels - current_labels
+
+        # If something genuinely new appeared, it's a new scene
+        if new_objects:
+            return False
+
+        # If something disappeared, it's a change worth noting
+        if disappeared:
+            return False
+
+        # Same objects, within time window — same scene
+        return True
 
     def was_recently_reported(
         self,

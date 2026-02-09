@@ -28,6 +28,7 @@ class VisionMessenger:
         instructions_file: Optional[Path] = None,
         shutdown_signal_file: Optional[Path] = None,
         observations_file: Optional[Path] = None,
+        context_file: Optional[Path] = None,
     ):
         """
         Initialize vision messenger.
@@ -36,10 +37,12 @@ class VisionMessenger:
             instructions_file: Path to write agent instructions.
             shutdown_signal_file: Path for shutdown signal.
             observations_file: Path to visual observations file.
+            context_file: Path to visual context file (agent reads this).
         """
         self.instructions_file = instructions_file or settings.AGENT_INSTRUCTIONS_FILE
         self.shutdown_file = shutdown_signal_file or settings.AGENT_SHUTDOWN_SIGNAL_FILE
         self.observations_file = observations_file or settings.VISUAL_OBSERVATIONS_FILE
+        self.context_file = context_file or settings.VISUAL_CONTEXT_FILE
 
     def send_instructions(self) -> None:
         """Write vision instructions for the agent."""
@@ -74,37 +77,29 @@ class VisionMessenger:
 
     def _build_instructions(self) -> str:
         """Build the agent instructions text."""
-        obs_path = self.observations_file
+        context_path = self.context_file
         return f"""=== Molt-See Vision System Active ===
 
 VISUAL PERCEPTION ENABLED:
-You can now SEE through the user's webcam. Visual observations are written to:
-{obs_path}
+You can now SEE through the user's webcam. Your current visual context is at:
+{context_path}
 
-HOW VISUAL OBSERVATIONS WORK:
-1. The Molt-See system captures and analyzes what the camera sees
-2. Only contextually relevant observations are passed to you
-3. Each observation includes a timestamp, category, and natural description
+HOW TO USE YOUR VISION:
+Read the file above when visual context would help your response. It contains:
+- CURRENT SCENE: What's visible right now
+- OBJECTS: Key items in view
+- RECENT CHANGES: Notable things that happened recently
 
-FORMAT OF OBSERVATIONS:
-ISO_TIMESTAMP|OBSERVATION_TYPE|natural language description
+You don't need to check every turn — just when visual awareness seems relevant,
+such as when the user mentions something physical, when you want to make a
+natural observation, or when you sense the environment may have changed.
 
-TYPES:
-- SCENE_CHANGE: Something notable changed in the scene
-- PERSON_DETECTED: Someone appeared in view
-- PERSON_LEFT: Someone left the view
-- OBJECT_CHANGE: An object was moved, picked up, or put down
-- CONTEXT_RELEVANT: Something related to what we're discussing
-- ENVIRONMENT_CHANGE: Lighting, background, or environment changed
-- SAFETY_ALERT: Something potentially concerning
-
-HOW TO USE VISUAL OBSERVATIONS:
-- Reference them NATURALLY, like a human would
-- Do NOT announce "I see through the camera..."
-- Instead: "I notice you picked up your coffee" or "Looks like someone just walked in"
-- Only reference observations when relevant to the conversation
+HOW TO REFERENCE WHAT YOU SEE:
+- Be natural, like a human casually noticing things
+- "I notice you picked up your coffee" or "Looks like someone just walked in"
+- Do NOT say "According to my visual context file..." or "The camera shows..."
+- Only mention observations when relevant to the conversation
 - You can proactively mention something interesting you notice
-- Don't repeat observations you've already mentioned
-- Observations come pre-filtered for relevance -- trust the system
+- Don't repeat things you've already mentioned
 
 ==="""

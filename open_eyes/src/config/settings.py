@@ -77,7 +77,7 @@ MEDIAPIPE_MAX_FACES: int = int(os.getenv("MEDIAPIPE_MAX_FACES", "3"))
 # Relevance Engine
 # ============================================================================
 RELEVANCE_THRESHOLD: float = float(os.getenv("RELEVANCE_THRESHOLD", "0.6"))
-OBSERVATION_COOLDOWN: float = float(os.getenv("OBSERVATION_COOLDOWN", "0.0"))
+OBSERVATION_COOLDOWN: float = float(os.getenv("OBSERVATION_COOLDOWN", "30.0"))
 CONTEXT_WINDOW_LINES: int = int(os.getenv("CONTEXT_WINDOW_LINES", "20"))
 
 # ============================================================================
@@ -90,6 +90,9 @@ MEMORY_SIMILARITY_THRESHOLD: float = float(
 )
 RECENTLY_REPORTED_WINDOW: float = float(
     os.getenv("RECENTLY_REPORTED_WINDOW", "120.0")
+)
+SCENE_DEDUP_WINDOW: float = float(
+    os.getenv("SCENE_DEDUP_WINDOW", "300.0")
 )
 
 # ============================================================================
@@ -109,6 +112,7 @@ VISUAL_OBSERVATIONS_FILE: Path = RUNTIME_DIR / "visual_observations.txt"
 VISION_MEMORY_FILE: Path = RUNTIME_DIR / "vision_memory.json"
 LATEST_DETECTIONS_FILE: Path = RUNTIME_DIR / "latest_detections.json"
 STRUCTURED_OBSERVATIONS_FILE: Path = RUNTIME_DIR / "structured_observations.jsonl"
+VISUAL_CONTEXT_FILE: Path = RUNTIME_DIR / "visual_context.txt"
 LATEST_FRAME_FILE: Path = RUNTIME_DIR / "latest_frame.jpg"
 MAX_STRUCTURED_FILE_SIZE: int = int(
     os.getenv("MAX_STRUCTURED_FILE_SIZE", str(10 * 1024 * 1024))  # 10MB default
@@ -124,6 +128,8 @@ PROCESSING_TIMEOUT: float = float(os.getenv("PROCESSING_TIMEOUT", "30.0"))
 # ============================================================================
 # Feature Flags
 # ============================================================================
+CONTEXT_MAX_RECENT_CHANGES: int = int(os.getenv("CONTEXT_MAX_RECENT_CHANGES", "5"))
+
 ENABLE_TERMINAL_DISPLAY: bool = os.getenv(
     "ENABLE_TERMINAL_DISPLAY", "true"
 ).lower() == "true"

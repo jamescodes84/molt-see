@@ -34,6 +34,7 @@ CONFIG_FILE: Path = RUNTIME_DIR / "molt_see_config.json"
 # ============================================================================
 EYES_STATUS_FILE: Path = RUNTIME_DIR / "eyes_status.txt"
 VISUAL_OBSERVATIONS_FILE: Path = RUNTIME_DIR / "visual_observations.txt"
+VISUAL_CONTEXT_FILE: Path = RUNTIME_DIR / "visual_context.txt"
 VISION_MEMORY_FILE: Path = RUNTIME_DIR / "vision_memory.json"
 EYES_PID_FILE: Path = RUNTIME_DIR / "eyes.pid"
 COORDINATOR_PID_FILE: Path = RUNTIME_DIR / "vision_coordinator.pid"
