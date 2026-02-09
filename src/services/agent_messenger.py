@@ -76,30 +76,15 @@ class VisionMessenger:
                 logger.debug(f"Failed to cleanup {f}: {e}")
 
     def _build_instructions(self) -> str:
-        """Build the agent instructions text."""
-        context_path = self.context_file
-        return f"""=== Molt-See Vision System Active ===
-
-VISUAL PERCEPTION ENABLED:
-You can now SEE through the user's webcam. Your current visual context is at:
-{context_path}
-
-HOW TO USE YOUR VISION:
-Read the file above when visual context would help your response. It contains:
-- CURRENT SCENE: What's visible right now
-- OBJECTS: Key items in view
-- RECENT CHANGES: Notable things that happened recently
-
-You don't need to check every turn — just when visual awareness seems relevant,
-such as when the user mentions something physical, when you want to make a
-natural observation, or when you sense the environment may have changed.
-
-HOW TO REFERENCE WHAT YOU SEE:
-- Be natural, like a human casually noticing things
-- "I notice you picked up your coffee" or "Looks like someone just walked in"
-- Do NOT say "According to my visual context file..." or "The camera shows..."
-- Only mention observations when relevant to the conversation
-- You can proactively mention something interesting you notice
-- Don't repeat things you've already mentioned
-
-==="""
+        """Read AGENT_INSTRUCTIONS.txt template and substitute placeholders."""
+        template_file = settings.PROJECT_DIR / "AGENT_INSTRUCTIONS.txt"
+        try:
+            template = template_file.read_text()
+            return template.replace(
+                "{{VISUAL_CONTEXT_FILE}}", str(self.context_file)
+            )
+        except FileNotFoundError:
+            logger.error(f"Template not found: {template_file}")
+            return (
+                f"Molt-See active. Visual context at: {self.context_file}"
+            )
