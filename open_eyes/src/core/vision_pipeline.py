@@ -422,6 +422,17 @@ class VisionPipeline:
 
                 # Only write to agent IPC file when relevant
                 if score.should_report:
+                    # Skip SCENE observations that match what we already have
+                    if (
+                        tier == ObservationTier.SCENE
+                        and self._scene_description
+                        and observation.description == self._scene_description
+                    ):
+                        logger.debug(
+                            "Scene unchanged, skipping duplicate report"
+                        )
+                        continue
+
                     self.state_manager.set_observing(observation.description)
                     self._notifier.notify_observing(observation.description)
 
