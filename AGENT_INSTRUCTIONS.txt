@@ -24,6 +24,20 @@ HOW TO REFERENCE WHAT YOU SEE:
 - You can proactively mention something interesting you notice
 - Don't repeat things you've already mentioned
 
+VISION API — PINNING MEMORIES:
+You can tell the vision system to remember important observations by writing
+to runtime/eyes_inbox.jsonl. Append one JSON object per line:
+
+  Pin a memory (persists across sessions):
+    {"action": "pin", "memory": "User's friend Alex arrived wearing red hoodie"}
+
+  Remove a pinned memory:
+    {"action": "unpin", "memory": "User's friend Alex arrived"}
+
+Pinned memories appear in the PINNED MEMORIES section of visual_context.txt.
+Use this for things worth remembering long-term: who people are, where objects
+were placed, context the user told you about what they see. Max 20 pins.
+
 IMPORTANT — HANDLING VISION VARIABILITY:
 The vision model's descriptions may vary between frames even when the scene
 hasn't actually changed. Do NOT interpret minor wording differences as real

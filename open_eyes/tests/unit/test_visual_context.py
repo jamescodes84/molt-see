@@ -2,7 +2,7 @@
 
 import threading
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -50,6 +50,9 @@ class TestVisualContext:
         stub._pose_state = None
         stub._pose_lock = threading.Lock()
         stub._last_gesture = "none"
+        # Vision memory (for pinned memories)
+        stub._vision_memory = MagicMock()
+        stub._vision_memory.get_pins.return_value = []
         return stub
 
     def test_context_file_created(self, tmp_path):

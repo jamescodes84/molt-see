@@ -125,6 +125,10 @@ class VisionPipeline:
         self._pose_lock = threading.Lock()
         self._last_gesture: str = "none"
 
+        # Agent inbox polling
+        self._last_inbox_check: float = 0.0
+        self._inbox_poll_interval: float = 2.0  # seconds
+
         # Threads
         self._threads: list[threading.Thread] = []
 
@@ -207,7 +211,20 @@ class VisionPipeline:
         # Persist memory
         self._vision_memory.save_state()
 
-        # Cleanup
+        # Clean up session files (pinned memories intentionally kept)
+        for cleanup_file in [
+            settings.VISUAL_OBSERVATIONS_FILE,
+            settings.STRUCTURED_OBSERVATIONS_FILE,
+            settings.VISUAL_CONTEXT_FILE,
+            settings.LATEST_DETECTIONS_FILE,
+            settings.LATEST_FRAME_FILE,
+            settings.EYES_INBOX_FILE,
+        ]:
+            try:
+                cleanup_file.unlink(missing_ok=True)
+            except Exception as e:
+                logger.debug(f"Failed to clean up {cleanup_file.name}: {e}")
+
         self._notifier.cleanup()
         self.state_manager.set_stopped()
         logger.info("Vision pipeline stopped")
@@ -377,6 +394,7 @@ class VisionPipeline:
                         f"{observation.description[:80]}"
                     )
             except queue.Empty:
+                self._process_inbox()
                 continue
             except Exception as e:
                 logger.error(f"Output error: {e}")
@@ -519,6 +537,13 @@ class VisionPipeline:
             lines.append("RECENT EVENTS:")
             for event in self._recent_events:
                 lines.append(f"- {event['time']} | {event['description']}")
+            lines.append("")
+
+        pins = self._vision_memory.get_pins()
+        if pins:
+            lines.append("PINNED MEMORIES:")
+            for pin in pins:
+                lines.append(f"- {pin['memory']}")
 
         content = "\n".join(lines) + "\n"
 
@@ -727,3 +752,60 @@ class VisionPipeline:
             except Exception as e:
                 logger.error(f"Pose tracker error: {e}")
                 time.sleep(settings.FACE_TRACKER_INTERVAL)
+
+    def _process_inbox(self) -> None:
+        """Check the agent inbox file for commands and process them.
+
+        Called periodically from the output loop. Reads JSONL commands
+        from eyes_inbox.jsonl and processes pin/unpin/focus commands.
+        """
+        now = time.monotonic()
+        if now - self._last_inbox_check < self._inbox_poll_interval:
+            return
+        self._last_inbox_check = now
+
+        inbox = settings.EYES_INBOX_FILE
+        if not inbox.exists():
+            return
+
+        try:
+            content = inbox.read_text().strip()
+            if not content:
+                return
+
+            # Clear inbox immediately (atomic: read then truncate)
+            inbox.write_text("")
+
+            context_changed = False
+            for line in content.splitlines():
+                try:
+                    cmd = json.loads(line)
+                    context_changed |= self._handle_command(cmd)
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.debug(f"Invalid inbox command: {e}")
+
+            if context_changed:
+                self._rebuild_visual_context()
+
+        except Exception as e:
+            logger.debug(f"Failed to read inbox: {e}")
+
+    def _handle_command(self, cmd: dict) -> bool:
+        """Handle a single agent command. Returns True if visual context changed."""
+        action = cmd.get("action", "").lower()
+
+        if action == "pin":
+            memory = cmd.get("memory", "").strip()
+            reason = cmd.get("reason", "")
+            if memory:
+                return self._vision_memory.pin(memory, reason)
+
+        elif action == "unpin":
+            memory = cmd.get("memory", "").strip()
+            if memory:
+                return self._vision_memory.unpin(memory)
+
+        else:
+            logger.debug(f"Unknown inbox action: {action}")
+
+        return False

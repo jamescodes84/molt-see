@@ -26,8 +26,11 @@ class VisionMemory:
 
     Maintains a sliding window of recent observations, tracks what has
     been reported vs. merely observed, and provides context for
-    relevance scoring.
+    relevance scoring. Supports agent-pinned memories that persist
+    across sessions.
     """
+
+    MAX_PINS = 20
 
     def __init__(
         self,
@@ -35,6 +38,7 @@ class VisionMemory:
         max_reported: int = settings.MAX_REPORTED,
         similarity_threshold: float = settings.MEMORY_SIMILARITY_THRESHOLD,
         state_file: Optional[Path] = None,
+        pins_file: Optional[Path] = None,
     ):
         """
         Initialize vision memory.
@@ -44,14 +48,17 @@ class VisionMemory:
             max_reported: Max reported observations to track.
             similarity_threshold: Text similarity threshold for dedup (0-1).
             state_file: Path for state persistence.
+            pins_file: Path for pinned memories persistence.
         """
         self.max_observations = max_observations
         self.max_reported = max_reported
         self.similarity_threshold = similarity_threshold
         self.state_file = state_file or settings.VISION_MEMORY_FILE
+        self.pins_file = pins_file or settings.PINNED_MEMORIES_FILE
 
         self._observations: deque[dict] = deque(maxlen=max_observations)
         self._reported: deque[dict] = deque(maxlen=max_reported)
+        self._pinned: list[dict] = []
 
     def record_observation(self, observation: SceneDescription) -> None:
         """
@@ -262,6 +269,71 @@ class VisionMemory:
 
         return " | ".join(parts)
 
+    # ------------------------------------------------------------------
+    # Pinned memories (agent-managed, persist across sessions)
+    # ------------------------------------------------------------------
+
+    def pin(self, memory: str, reason: str = "") -> bool:
+        """Pin a memory so it persists across sessions.
+
+        Returns True if added, False if duplicate or at capacity.
+        """
+        # Dedup: skip if already pinned (fuzzy match)
+        for existing in self._pinned:
+            if SequenceMatcher(None, memory, existing["memory"]).ratio() > 0.85:
+                return False
+
+        if len(self._pinned) >= self.MAX_PINS:
+            logger.warning("Pinned memory limit reached, dropping oldest")
+            self._pinned.pop(0)
+
+        self._pinned.append({
+            "memory": memory,
+            "reason": reason,
+            "pinned_at": time.time(),
+        })
+        self._save_pins()
+        logger.info(f"Pinned memory: {memory}")
+        return True
+
+    def unpin(self, memory: str) -> bool:
+        """Remove a pinned memory. Uses fuzzy match. Returns True if removed."""
+        for i, existing in enumerate(self._pinned):
+            if SequenceMatcher(None, memory, existing["memory"]).ratio() > 0.7:
+                removed = self._pinned.pop(i)
+                self._save_pins()
+                logger.info(f"Unpinned memory: {removed['memory']}")
+                return True
+        return False
+
+    def get_pins(self) -> list[dict]:
+        """Return all pinned memories."""
+        return list(self._pinned)
+
+    def _save_pins(self) -> None:
+        """Persist pinned memories to disk."""
+        try:
+            self.pins_file.parent.mkdir(parents=True, exist_ok=True)
+            lines = [json.dumps(p, separators=(",", ":")) for p in self._pinned]
+            self.pins_file.write_text("\n".join(lines) + "\n" if lines else "")
+        except Exception as e:
+            logger.warning(f"Failed to save pinned memories: {e}")
+
+    def _load_pins(self) -> None:
+        """Load pinned memories from disk."""
+        try:
+            if self.pins_file.exists():
+                content = self.pins_file.read_text().strip()
+                if content:
+                    self._pinned = [json.loads(line) for line in content.splitlines()]
+                    logger.info(f"Loaded {len(self._pinned)} pinned memories")
+        except Exception as e:
+            logger.warning(f"Failed to load pinned memories: {e}")
+
+    # ------------------------------------------------------------------
+    # State persistence
+    # ------------------------------------------------------------------
+
     def save_state(self) -> None:
         """Persist memory to disk."""
         try:
@@ -273,6 +345,7 @@ class VisionMemory:
             self.state_file.write_text(json.dumps(state, indent=2))
         except Exception as e:
             logger.warning(f"Failed to save vision memory: {e}")
+        self._save_pins()
 
     def load_state(self) -> None:
         """Load memory from disk."""
@@ -293,6 +366,7 @@ class VisionMemory:
                 )
         except Exception as e:
             logger.warning(f"Failed to load vision memory: {e}")
+        self._load_pins()
 
     def clear_session(self) -> None:
         """Clear short-term dedup state for a fresh session.
