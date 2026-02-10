@@ -3,18 +3,10 @@ logs/
 *.log
 
 # Runtime files
-runtime/*.pid
-runtime/*_status.txt
-runtime/visual_observations.txt
-runtime/vision_memory.json
-runtime/molt_see_config.json
-runtime/*.signal
-runtime/agent_instructions.active
-runtime/agent_shutdown.signal
-runtime/latest_detections.json
-runtime/structured_observations.jsonl
-runtime/latest_frame.jpg
-runtime/*.task
+runtime/
+
+# Build artifacts
+*.egg-info/
 
 # Python
 __pycache__/
